@@ -294,3 +294,283 @@ func BenchmarkHNSWIndex_Search(b *testing.B) {
 		idx.Search(ctx, query, 10)
 	}
 }
+
+func TestBruteForceIndex_Dimension(t *testing.T) {
+	idx := NewBruteForceIndex(128)
+	defer idx.Close()
+
+	assert.Equal(t, 128, idx.Dimension())
+}
+
+func TestBruteForceIndex_AddBatch(t *testing.T) {
+	idx := NewBruteForceIndex(3)
+	defer idx.Close()
+
+	ctx := context.Background()
+
+	t.Run("adds batch of vectors", func(t *testing.T) {
+		ids := []string{"v1", "v2", "v3"}
+		vectors := [][]float32{
+			{1, 0, 0},
+			{0, 1, 0},
+			{0, 0, 1},
+		}
+
+		err := idx.AddBatch(ctx, ids, vectors)
+		require.NoError(t, err)
+		assert.Equal(t, 3, idx.Size())
+	})
+
+	t.Run("rejects mismatched lengths", func(t *testing.T) {
+		ids := []string{"v4", "v5"}
+		vectors := [][]float32{{1, 0, 0}}
+
+		err := idx.AddBatch(ctx, ids, vectors)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "same length")
+	})
+}
+
+func TestHNSWIndex_Dimension(t *testing.T) {
+	cfg := DefaultConfig(256)
+	idx := NewHNSWIndex(cfg)
+	defer idx.Close()
+
+	assert.Equal(t, 256, idx.Dimension())
+}
+
+func TestHNSWIndex_AddBatch_Errors(t *testing.T) {
+	cfg := DefaultConfig(3)
+	idx := NewHNSWIndex(cfg)
+	defer idx.Close()
+
+	ctx := context.Background()
+
+	t.Run("rejects mismatched lengths", func(t *testing.T) {
+		ids := []string{"v1", "v2"}
+		vectors := [][]float32{{1, 0, 0}}
+
+		err := idx.AddBatch(ctx, ids, vectors)
+		assert.ErrorIs(t, err, ErrDimensionMismatch)
+	})
+}
+
+func TestHNSWIndex_ErrorCases(t *testing.T) {
+	cfg := DefaultConfig(3)
+	idx := NewHNSWIndex(cfg)
+
+	ctx := context.Background()
+
+	t.Run("add rejects dimension mismatch", func(t *testing.T) {
+		err := idx.Add(ctx, "vec1", []float32{1, 0}) // Only 2 dimensions
+		assert.ErrorIs(t, err, ErrDimensionMismatch)
+	})
+
+	t.Run("search rejects dimension mismatch", func(t *testing.T) {
+		_, err := idx.Search(ctx, []float32{1, 0}, 5)
+		assert.ErrorIs(t, err, ErrDimensionMismatch)
+	})
+
+	t.Run("search rejects invalid k", func(t *testing.T) {
+		err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+		require.NoError(t, err)
+
+		_, err = idx.Search(ctx, []float32{1, 0, 0}, 0)
+		assert.ErrorIs(t, err, ErrInvalidK)
+
+		_, err = idx.Search(ctx, []float32{1, 0, 0}, -1)
+		assert.ErrorIs(t, err, ErrInvalidK)
+	})
+
+	t.Run("get returns not found for missing id", func(t *testing.T) {
+		_, err := idx.Get(ctx, "nonexistent")
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("remove returns not found for missing id", func(t *testing.T) {
+		err := idx.Remove(ctx, "nonexistent")
+		assert.ErrorIs(t, err, ErrNotFound)
+	})
+
+	t.Run("operations fail after close", func(t *testing.T) {
+		idx.Close()
+
+		err := idx.Add(ctx, "vec2", []float32{1, 0, 0})
+		assert.ErrorIs(t, err, ErrIndexClosed)
+
+		_, err = idx.Search(ctx, []float32{1, 0, 0}, 1)
+		assert.ErrorIs(t, err, ErrIndexClosed)
+
+		_, err = idx.Get(ctx, "vec1")
+		assert.ErrorIs(t, err, ErrIndexClosed)
+
+		err = idx.Remove(ctx, "vec1")
+		assert.ErrorIs(t, err, ErrIndexClosed)
+	})
+}
+
+func TestHNSWIndex_ContextCancellation(t *testing.T) {
+	cfg := DefaultConfig(3)
+	idx := NewHNSWIndex(cfg)
+	defer idx.Close()
+
+	t.Run("add respects context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+
+	t.Run("search respects context cancellation", func(t *testing.T) {
+		// First add a vector with valid context
+		ctx := context.Background()
+		err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+		require.NoError(t, err)
+
+		// Now search with cancelled context
+		cancelledCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		_, err = idx.Search(cancelledCtx, []float32{1, 0, 0}, 1)
+		assert.ErrorIs(t, err, context.Canceled)
+	})
+}
+
+func TestHNSWIndex_LargeIndex(t *testing.T) {
+	// Test with enough vectors to exercise shrinkConnections
+	cfg := Config{
+		Dimension:      3,
+		M:              4,  // Small M to force more shrinking
+		EfConstruction: 20,
+		EfSearch:       10,
+	}
+	idx := NewHNSWIndex(cfg)
+	defer idx.Close()
+
+	ctx := context.Background()
+
+	// Add many vectors to trigger neighbor shrinking
+	for i := 0; i < 100; i++ {
+		x := float32(i % 10)
+		y := float32(i / 10)
+		z := float32(i % 3)
+		err := idx.Add(ctx, string(rune('a'+i)), []float32{x, y, z})
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 100, idx.Size())
+
+	// Search should still work
+	results, err := idx.Search(ctx, []float32{5, 5, 1}, 10)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(results), 10)
+}
+
+func TestHNSWIndex_RemoveEntryPoint(t *testing.T) {
+	cfg := DefaultConfig(3)
+	idx := NewHNSWIndex(cfg)
+	defer idx.Close()
+
+	ctx := context.Background()
+
+	// Add vectors
+	err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+	require.NoError(t, err)
+	err = idx.Add(ctx, "vec2", []float32{0, 1, 0})
+	require.NoError(t, err)
+
+	// Remove first vector (likely entry point)
+	err = idx.Remove(ctx, "vec1")
+	require.NoError(t, err)
+
+	// Index should still work
+	assert.Equal(t, 1, idx.Size())
+
+	results, err := idx.Search(ctx, []float32{0, 1, 0}, 1)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+	assert.Equal(t, "vec2", results[0].ID)
+}
+
+func TestHNSWIndex_RemoveAllVectors(t *testing.T) {
+	cfg := DefaultConfig(3)
+	idx := NewHNSWIndex(cfg)
+	defer idx.Close()
+
+	ctx := context.Background()
+
+	// Add and remove all vectors
+	err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+	require.NoError(t, err)
+
+	err = idx.Remove(ctx, "vec1")
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, idx.Size())
+
+	// Search on empty index
+	results, err := idx.Search(ctx, []float32{1, 0, 0}, 5)
+	require.NoError(t, err)
+	assert.Len(t, results, 0)
+}
+
+func TestConfig_Defaults(t *testing.T) {
+	t.Run("NewHNSWIndex applies defaults for zero values", func(t *testing.T) {
+		cfg := Config{
+			Dimension:      3,
+			M:              0,  // Should default to 16
+			EfConstruction: 0,  // Should default to 200
+			EfSearch:       0,  // Should default to 50
+		}
+		idx := NewHNSWIndex(cfg)
+		defer idx.Close()
+
+		// Verify it works (defaults were applied)
+		ctx := context.Background()
+		err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+		require.NoError(t, err)
+	})
+}
+
+func TestBruteForceIndex_SearchDimensionMismatch(t *testing.T) {
+	idx := NewBruteForceIndex(3)
+	defer idx.Close()
+
+	ctx := context.Background()
+	err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+	require.NoError(t, err)
+
+	_, err = idx.Search(ctx, []float32{1, 0}, 1) // Wrong dimension
+	assert.ErrorIs(t, err, ErrDimensionMismatch)
+}
+
+func TestBruteForceIndex_ClosedOperations(t *testing.T) {
+	idx := NewBruteForceIndex(3)
+	ctx := context.Background()
+
+	err := idx.Add(ctx, "vec1", []float32{1, 0, 0})
+	require.NoError(t, err)
+
+	idx.Close()
+
+	t.Run("add fails after close", func(t *testing.T) {
+		err := idx.Add(ctx, "vec2", []float32{0, 1, 0})
+		assert.ErrorIs(t, err, ErrIndexClosed)
+	})
+
+	t.Run("remove fails after close", func(t *testing.T) {
+		err := idx.Remove(ctx, "vec1")
+		assert.ErrorIs(t, err, ErrIndexClosed)
+	})
+
+	t.Run("get fails after close", func(t *testing.T) {
+		_, err := idx.Get(ctx, "vec1")
+		assert.ErrorIs(t, err, ErrIndexClosed)
+	})
+
+	t.Run("search fails after close", func(t *testing.T) {
+		_, err := idx.Search(ctx, []float32{1, 0, 0}, 1)
+		assert.ErrorIs(t, err, ErrIndexClosed)
+	})
+}

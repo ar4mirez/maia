@@ -551,3 +551,140 @@ func BenchmarkAssembler_Assemble(b *testing.B) {
 		_, _ = a.Assemble(ctx, results, opts)
 	}
 }
+
+func BenchmarkAssembler_Assemble_Small(b *testing.B) {
+	a := NewAssembler(DefaultAssemblerConfig())
+	ctx := context.Background()
+
+	// Create 10 test memories (typical small query)
+	items := make([]*retrieval.Result, 10)
+	for i := 0; i < 10; i++ {
+		items[i] = &retrieval.Result{
+			Memory: &storage.Memory{
+				ID:        string(rune('a' + i)),
+				Content:   "This is test content for benchmarking.",
+				Type:      storage.MemoryTypeSemantic,
+				CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour),
+			},
+			Score: 0.9 - float64(i)*0.05,
+		}
+	}
+	results := &retrieval.Results{Items: items, Total: len(items)}
+	opts := &AssembleOptions{TokenBudget: 4000}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = a.Assemble(ctx, results, opts)
+	}
+}
+
+func BenchmarkAssembler_Assemble_Large(b *testing.B) {
+	a := NewAssembler(DefaultAssemblerConfig())
+	ctx := context.Background()
+
+	// Create 500 test memories (large scale scenario)
+	items := make([]*retrieval.Result, 500)
+	for i := 0; i < 500; i++ {
+		items[i] = &retrieval.Result{
+			Memory: &storage.Memory{
+				ID:        string(rune(i)),
+				Content:   "This is a larger test content for benchmarking the context assembler with more data.",
+				Type:      storage.MemoryTypeSemantic,
+				CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour),
+			},
+			Score: 0.9 - float64(i)*0.001,
+		}
+	}
+	results := &retrieval.Results{Items: items, Total: len(items)}
+	opts := &AssembleOptions{TokenBudget: 8000}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = a.Assemble(ctx, results, opts)
+	}
+}
+
+func BenchmarkAssembler_Assemble_WithSystemPrompt(b *testing.B) {
+	a := NewAssembler(DefaultAssemblerConfig())
+	ctx := context.Background()
+
+	items := make([]*retrieval.Result, 50)
+	for i := 0; i < 50; i++ {
+		items[i] = &retrieval.Result{
+			Memory: &storage.Memory{
+				ID:        string(rune(i)),
+				Content:   "This is test content for benchmarking.",
+				Type:      storage.MemoryTypeSemantic,
+				CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour),
+			},
+			Score: 0.9 - float64(i)*0.01,
+		}
+	}
+	results := &retrieval.Results{Items: items, Total: len(items)}
+	opts := &AssembleOptions{
+		TokenBudget:  4000,
+		SystemPrompt: "You are an AI assistant. Use the following context to answer questions.",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = a.Assemble(ctx, results, opts)
+	}
+}
+
+// TestAssembler_PerformanceTarget validates that context assembly
+// meets the <200ms p99 latency target
+func TestAssembler_PerformanceTarget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping performance test in short mode")
+	}
+
+	a := NewAssembler(DefaultAssemblerConfig())
+	ctx := context.Background()
+
+	// Create a realistic scenario: 100 memories
+	items := make([]*retrieval.Result, 100)
+	for i := 0; i < 100; i++ {
+		items[i] = &retrieval.Result{
+			Memory: &storage.Memory{
+				ID:        string(rune(i)),
+				Content:   "This is realistic content that might appear in a memory system. It includes some details and context.",
+				Type:      storage.MemoryTypeSemantic,
+				CreatedAt: time.Now().Add(-time.Duration(i) * time.Hour),
+			},
+			Score: 0.9 - float64(i)*0.005,
+		}
+	}
+	results := &retrieval.Results{Items: items, Total: len(items)}
+	opts := &AssembleOptions{TokenBudget: 4000}
+
+	// Run 100 iterations and track times
+	iterations := 100
+	times := make([]time.Duration, iterations)
+
+	for i := 0; i < iterations; i++ {
+		start := time.Now()
+		_, err := a.Assemble(ctx, results, opts)
+		times[i] = time.Since(start)
+		require.NoError(t, err)
+	}
+
+	// Sort times for percentile calculation
+	for i := 0; i < len(times); i++ {
+		for j := i + 1; j < len(times); j++ {
+			if times[j] < times[i] {
+				times[i], times[j] = times[j], times[i]
+			}
+		}
+	}
+
+	// Calculate p99 (99th percentile)
+	p99Index := int(float64(iterations) * 0.99)
+	p99 := times[p99Index]
+
+	// Target: <200ms
+	target := 200 * time.Millisecond
+	t.Logf("Context assembly p99 latency: %v (target: %v)", p99, target)
+
+	assert.Less(t, p99, target, "Context assembly p99 should be under 200ms")
+}
