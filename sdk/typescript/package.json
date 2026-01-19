@@ -1,0 +1,54 @@
+{
+  "name": "@maia/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for MAIA - AI-native distributed memory system",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "maia",
+    "memory",
+    "llm",
+    "ai",
+    "context",
+    "rag"
+  ],
+  "author": "MAIA Authors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ar4mirez/maia.git",
+    "directory": "sdk/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "eslint": "^8.55.0",
+    "msw": "^2.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

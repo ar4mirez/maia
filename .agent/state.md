@@ -8,7 +8,7 @@
 
 ## Current Phase
 
-**Phase 8: OpenAI Proxy** - COMPLETE
+**Phase 9: SDKs** - COMPLETE
 
 ---
 
@@ -280,12 +280,98 @@ maiactl stats
 
 ---
 
+### SESSION 9 (2026-01-19) - Phase 9 SDKs
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+- [x] Implemented Go SDK (pkg/maia) with full client API
+- [x] Added Go SDK tests (74.7% coverage)
+- [x] Implemented TypeScript SDK with async/Promise API
+- [x] Added TypeScript SDK tests with vitest
+- [x] Implemented Python SDK with sync and async clients
+- [x] Added Python SDK tests with pytest
+
+**Go SDK (pkg/maia)**:
+- `pkg/maia/types.go` - Type definitions
+- `pkg/maia/errors.go` - Error types with helper functions
+- `pkg/maia/client.go` - HTTP client with all API methods
+- `pkg/maia/client_test.go` - Comprehensive test suite
+
+**Go SDK Usage**:
+```go
+client := maia.New(maia.WithBaseURL("http://localhost:8080"))
+
+// Store a memory
+mem, _ := client.Remember(ctx, "default", "User prefers dark mode")
+
+// Recall context
+context, _ := client.Recall(ctx, "user preferences",
+    maia.WithNamespace("default"),
+    maia.WithTokenBudget(2000),
+)
+
+// Forget
+client.Forget(ctx, mem.ID)
+```
+
+**TypeScript SDK (sdk/typescript)**:
+- `src/types.ts` - Type definitions
+- `src/errors.ts` - Error classes with type guards
+- `src/client.ts` - MAIAClient class with all methods
+- `src/index.ts` - Module exports
+
+**TypeScript SDK Usage**:
+```typescript
+const client = new MAIAClient({ baseUrl: 'http://localhost:8080' });
+
+// Store a memory
+const memory = await client.remember('default', 'User prefers dark mode');
+
+// Recall context
+const context = await client.recall('user preferences', {
+  namespace: 'default',
+  tokenBudget: 2000,
+});
+
+// Forget
+await client.forget(memory.id);
+```
+
+**Python SDK (sdk/python)**:
+- `maia/types.py` - Pydantic models
+- `maia/errors.py` - Exception classes
+- `maia/client.py` - Sync and async clients
+- `maia/__init__.py` - Module exports
+
+**Python SDK Usage**:
+```python
+# Sync client
+client = MAIAClient(base_url="http://localhost:8080")
+memory = client.remember("default", "User prefers dark mode")
+context = client.recall("user preferences", namespace="default")
+client.forget(memory.id)
+
+# Async client
+async with AsyncMAIAClient() as client:
+    memory = await client.remember("default", "User prefers dark mode")
+    context = await client.recall("user preferences")
+```
+
+**Notes**:
+- All SDKs have consistent API design (remember/recall/forget)
+- All SDKs support full CRUD operations
+- TypeScript SDK uses native fetch with configurable timeout
+- Python SDK uses httpx with Pydantic for validation
+- Overall Go coverage: 67.6%
+
+---
+
 ## Next Steps
 
-1. **SDKs** - Implement Go SDK (pkg/maia), TypeScript SDK, Python SDK
-2. **Documentation** - Add usage examples and API documentation
-3. **Integration Testing** - End-to-end tests with MCP client
-4. **Production Hardening** - Authentication, metrics, Kubernetes deployment
+1. **Documentation** - Add usage examples and API documentation
+2. **Integration Testing** - End-to-end tests with MCP client
+3. **Production Hardening** - Authentication, metrics, Kubernetes deployment
 
 ---
 

@@ -164,14 +164,14 @@ MAIA provides **position-aware context assembly** that:
 
 ---
 
-### Phase 8: SDKs (🔲 PLANNED)
+### Phase 8: SDKs (✅ COMPLETE)
 
 **Goal**: Client libraries for common languages
 
 **Deliverables**:
-- [ ] Go SDK (pkg/maia)
-- [ ] TypeScript SDK
-- [ ] Python SDK
+- [x] Go SDK (pkg/maia)
+- [x] TypeScript SDK
+- [x] Python SDK
 
 ---
 
