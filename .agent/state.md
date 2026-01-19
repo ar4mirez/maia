@@ -8,7 +8,7 @@
 
 ## Current Phase
 
-**Phase 4: Test Coverage & Performance** - COMPLETE
+**Phase 5: Local Embedding Model** - IN PROGRESS
 
 ---
 
@@ -108,20 +108,49 @@
 | context | 93.1% | 85% | ✅ Exceeds |
 | server | 83.1% | 80% | ✅ Met |
 | config | 94.3% | 80% | ✅ Exceeds |
-| **TOTAL** | **87.1%** | 70% | ✅ **Exceeds target** |
+| **TOTAL** | **79.4%** | 70% | ✅ **Exceeds target** |
+
+---
+
+### SESSION 5 (2026-01-19) - Phase 5 Local Embedding Model
+
+**STATUS**: IN PROGRESS
+
+**Completed This Session**:
+- [x] Created RFD 0001 for local embedding provider architecture
+- [x] Implemented WordPiece tokenizer with full BERT-style tokenization
+- [x] Added ONNX Runtime Go bindings integration
+- [x] Implemented LocalProvider with mean pooling and normalization
+- [x] Created model download/caching utilities
+- [x] Added embedding provider factory
+- [x] Added comprehensive tokenizer tests (92.6% encode coverage)
+- [x] Added model utilities tests
+
+**Key Components**:
+- `internal/embedding/local/tokenizer.go` - WordPiece tokenization
+- `internal/embedding/local/provider.go` - ONNX Runtime inference
+- `internal/embedding/local/model.go` - Model download and caching
+- `internal/embedding/local/factory.go` - Provider creation
+- `.agent/rfd/0001-local-embedding-provider.md` - Architecture decision
+
+**Notes**:
+- Provider requires ONNX Runtime native library (CGO)
+- Model will be auto-downloaded on first use (~90MB)
+- Tokenizer and utilities are fully testable without ONNX Runtime
+- Coverage dropped to 79.4% due to untestable ONNX code (expected)
 
 ---
 
 ## Known Issues
 
-None currently.
+1. **Local embedding provider requires ONNX Runtime** - The provider code requires CGO and ONNX Runtime native libraries. Tests for the provider itself cannot run without these dependencies.
 
 ---
 
-## Next Steps (Phase 5)
+## Next Steps (Phase 5 Continued)
 
-1. **Local Embedding Model** - Implement ONNX-based all-MiniLM-L6-v2
-2. **Index Persistence** - Add vector index persistence and recovery
+1. **Index Persistence** - Add vector index persistence and recovery
+2. **Integration Testing** - Test local embeddings with actual model
 3. **MCP Server** - Implement Model Context Protocol server
 4. **CLI Tool** - Implement maiactl command-line tool
 

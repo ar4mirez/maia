@@ -37,8 +37,14 @@ type Config struct {
 	// ModelPath is the path to the local model file (for local provider).
 	ModelPath string `mapstructure:"model_path"`
 
+	// VocabPath is the path to the vocabulary file (for local provider).
+	VocabPath string `mapstructure:"vocab_path"`
+
 	// Dimension is the embedding dimension (required for mock provider).
 	Dimension int `mapstructure:"dimension"`
+
+	// MaxLength is the maximum sequence length (for local provider).
+	MaxLength int `mapstructure:"max_length"`
 
 	// APIKey for remote providers (OpenAI, etc.)
 	APIKey string `mapstructure:"api_key"`
@@ -58,6 +64,7 @@ func DefaultConfig() Config {
 	return Config{
 		Provider:  "mock",
 		Dimension: 384, // Common dimension for small models
+		MaxLength: 256,
 		BatchSize: 32,
 	}
 }
