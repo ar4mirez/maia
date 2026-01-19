@@ -8,6 +8,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	mcontext "github.com/ar4mirez/maia/internal/context"
+	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
 )
 
@@ -381,20 +383,62 @@ func (s *Server) listNamespaceMemories(c *gin.Context) {
 	})
 }
 
-// Context handler (placeholder for now)
+// GetContextRequest extended options
+type GetContextRequestExtended struct {
+	Query         string  `json:"query" binding:"required"`
+	Namespace     string  `json:"namespace,omitempty"`
+	TokenBudget   int     `json:"token_budget,omitempty"`
+	SystemPrompt  string  `json:"system_prompt,omitempty"`
+	IncludeScores bool    `json:"include_scores,omitempty"`
+	MinScore      float64 `json:"min_score,omitempty"`
+}
 
+// ContextResponse represents the assembled context response.
+type ContextResponse struct {
+	Content     string                    `json:"content"`
+	Memories    []*ContextMemoryResponse  `json:"memories"`
+	TokenCount  int                       `json:"token_count"`
+	TokenBudget int                       `json:"token_budget"`
+	Truncated   bool                      `json:"truncated"`
+	ZoneStats   *ContextZoneStatsResponse `json:"zone_stats,omitempty"`
+	QueryTime   string                    `json:"query_time"`
+}
+
+// ContextMemoryResponse represents a memory in the context response.
+type ContextMemoryResponse struct {
+	ID         string  `json:"id"`
+	Content    string  `json:"content"`
+	Type       string  `json:"type"`
+	Score      float64 `json:"score,omitempty"`
+	Position   string  `json:"position"`
+	TokenCount int     `json:"token_count"`
+	Truncated  bool    `json:"truncated"`
+}
+
+// ContextZoneStatsResponse represents zone statistics.
+type ContextZoneStatsResponse struct {
+	CriticalUsed   int `json:"critical_used"`
+	CriticalBudget int `json:"critical_budget"`
+	MiddleUsed     int `json:"middle_used"`
+	MiddleBudget   int `json:"middle_budget"`
+	RecencyUsed    int `json:"recency_used"`
+	RecencyBudget  int `json:"recency_budget"`
+}
+
+// Context handler - performs query analysis, retrieval, and context assembly
 func (s *Server) getContext(c *gin.Context) {
-	var req GetContextRequest
+	var req GetContextRequestExtended
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
+			Error:   "invalid request body",
 			Details: err.Error(),
 		})
 		return
 	}
 
-	// For now, just search memories and return them
-	// This will be expanded in Phase 3 with proper context assembly
+	ctx := c.Request.Context()
+
+	// Set defaults
 	namespace := req.Namespace
 	if namespace == "" {
 		namespace = s.cfg.Memory.DefaultNamespace
@@ -405,29 +449,126 @@ func (s *Server) getContext(c *gin.Context) {
 		tokenBudget = s.cfg.Memory.DefaultTokenBudget
 	}
 
-	opts := &storage.SearchOptions{
-		Namespace: namespace,
-		Limit:     50,
-	}
-
-	results, err := s.store.SearchMemories(c.Request.Context(), opts)
+	// Step 1: Analyze the query
+	analysis, err := s.analyzer.Analyze(ctx, req.Query)
 	if err != nil {
-		s.handleStorageError(c, err)
+		s.logger.Error("query analysis failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "query analysis failed",
+			Code:  "ANALYSIS_ERROR",
+		})
 		return
 	}
 
-	// Extract memories from results
-	memories := make([]*storage.Memory, len(results))
-	for i, r := range results {
-		memories[i] = r.Memory
+	// Step 2: Retrieve relevant memories
+	var retrievalResults *retrieval.Results
+	if s.retriever != nil {
+		// Use the retriever if available
+		retrievalResults, err = s.retriever.Retrieve(ctx, req.Query, &retrieval.RetrieveOptions{
+			Namespace: namespace,
+			Limit:     50,
+			MinScore:  req.MinScore,
+			UseVector: true,
+			UseText:   true,
+			Analysis:  analysis,
+		})
+		if err != nil {
+			s.logger.Error("retrieval failed", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error: "retrieval failed",
+				Code:  "RETRIEVAL_ERROR",
+			})
+			return
+		}
+	} else {
+		// Fallback to basic storage search
+		searchOpts := &storage.SearchOptions{
+			Namespace: namespace,
+			Limit:     50,
+		}
+		storageResults, err := s.store.SearchMemories(ctx, searchOpts)
+		if err != nil {
+			s.handleStorageError(c, err)
+			return
+		}
+
+		// Convert to retrieval results
+		items := make([]*retrieval.Result, len(storageResults))
+		for i, r := range storageResults {
+			items[i] = &retrieval.Result{
+				Memory: r.Memory,
+				Score:  r.Score,
+			}
+		}
+		retrievalResults = &retrieval.Results{
+			Items: items,
+			Total: len(items),
+		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"memories":     memories,
-		"token_count":  0, // TODO: implement token counting
-		"token_budget": tokenBudget,
-		"truncated":    false,
-	})
+	// Step 3: Assemble context with position awareness
+	assembleOpts := &mcontext.AssembleOptions{
+		TokenBudget:   tokenBudget,
+		SystemPrompt:  req.SystemPrompt,
+		IncludeScores: req.IncludeScores,
+	}
+
+	assembled, err := s.assembler.Assemble(ctx, retrievalResults, assembleOpts)
+	if err != nil {
+		s.logger.Error("context assembly failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "context assembly failed",
+			Code:  "ASSEMBLY_ERROR",
+		})
+		return
+	}
+
+	// Build response
+	memories := make([]*ContextMemoryResponse, len(assembled.Memories))
+	for i, m := range assembled.Memories {
+		memories[i] = &ContextMemoryResponse{
+			ID:         m.Memory.ID,
+			Content:    m.Memory.Content,
+			Type:       string(m.Memory.Type),
+			Score:      m.Score,
+			Position:   positionToString(m.Position),
+			TokenCount: m.TokenCount,
+			Truncated:  m.Truncated,
+		}
+	}
+
+	response := ContextResponse{
+		Content:     assembled.Content,
+		Memories:    memories,
+		TokenCount:  assembled.TokenCount,
+		TokenBudget: tokenBudget,
+		Truncated:   assembled.Truncated,
+		ZoneStats: &ContextZoneStatsResponse{
+			CriticalUsed:   assembled.ZoneStats.CriticalUsed,
+			CriticalBudget: assembled.ZoneStats.CriticalBudget,
+			MiddleUsed:     assembled.ZoneStats.MiddleUsed,
+			MiddleBudget:   assembled.ZoneStats.MiddleBudget,
+			RecencyUsed:    assembled.ZoneStats.RecencyUsed,
+			RecencyBudget:  assembled.ZoneStats.RecencyBudget,
+		},
+		QueryTime: assembled.AssemblyTime.String(),
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// positionToString converts a Position to a string.
+func positionToString(p mcontext.Position) string {
+	switch p {
+	case mcontext.PositionCritical:
+		return "critical"
+	case mcontext.PositionMiddle:
+		return "middle"
+	case mcontext.PositionRecency:
+		return "recency"
+	default:
+		return "unknown"
+	}
 }
 
 // Stats handler

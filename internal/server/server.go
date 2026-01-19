@@ -11,20 +11,38 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ar4mirez/maia/internal/config"
+	mcontext "github.com/ar4mirez/maia/internal/context"
+	"github.com/ar4mirez/maia/internal/query"
+	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
 )
 
 // Server represents the MAIA HTTP server.
 type Server struct {
-	cfg    *config.Config
-	store  storage.Store
-	logger *zap.Logger
-	router *gin.Engine
-	server *http.Server
+	cfg       *config.Config
+	store     storage.Store
+	logger    *zap.Logger
+	router    *gin.Engine
+	server    *http.Server
+	analyzer  *query.Analyzer
+	retriever *retrieval.Retriever
+	assembler *mcontext.Assembler
+}
+
+// ServerDeps holds optional dependencies for the server.
+type ServerDeps struct {
+	Retriever *retrieval.Retriever
+	Assembler *mcontext.Assembler
+	Analyzer  *query.Analyzer
 }
 
 // New creates a new HTTP server.
 func New(cfg *config.Config, store storage.Store, logger *zap.Logger) *Server {
+	return NewWithDeps(cfg, store, logger, nil)
+}
+
+// NewWithDeps creates a new HTTP server with optional dependencies.
+func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, deps *ServerDeps) *Server {
 	// Set Gin mode based on log level
 	if cfg.Log.Level == "debug" {
 		gin.SetMode(gin.DebugMode)
@@ -39,6 +57,23 @@ func New(cfg *config.Config, store storage.Store, logger *zap.Logger) *Server {
 		store:  store,
 		logger: logger,
 		router: router,
+	}
+
+	// Set up dependencies if provided
+	if deps != nil {
+		s.retriever = deps.Retriever
+		s.assembler = deps.Assembler
+		s.analyzer = deps.Analyzer
+	}
+
+	// Create default analyzer if not provided
+	if s.analyzer == nil {
+		s.analyzer = query.NewAnalyzer()
+	}
+
+	// Create default assembler if not provided
+	if s.assembler == nil {
+		s.assembler = mcontext.NewAssembler(mcontext.DefaultAssemblerConfig())
 	}
 
 	s.setupMiddleware()
