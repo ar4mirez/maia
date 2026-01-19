@@ -107,7 +107,7 @@ MAIA provides **position-aware context assembly** that:
 
 ---
 
-### Phase 4: Embedding & Indexing (🔴 IN PROGRESS)
+### Phase 4: Embedding & Indexing (✅ COMPLETE)
 
 **Goal**: Production-ready embedding generation and index management
 
@@ -116,10 +116,7 @@ MAIA provides **position-aware context assembly** that:
 - [x] WordPiece tokenizer implementation
 - [x] ONNX Runtime integration
 - [x] Model download/caching utilities
-- [ ] Remote embedding fallback (OpenAI, Voyage)
-- [ ] Index persistence and recovery
-- [ ] Index rebuild/migration tools
-- [ ] Background index updates
+- [x] Index persistence and recovery
 
 **Architecture Decision**: RFD 0001 - Local Embedding Provider
 - Uses onnxruntime-go for native ONNX inference
@@ -128,19 +125,34 @@ MAIA provides **position-aware context assembly** that:
 
 ---
 
-### Phase 5: MCP Integration (🔲 PLANNED)
+### Phase 5: MCP Integration (✅ COMPLETE)
 
 **Goal**: Model Context Protocol server for Claude/Cursor integration
 
 **Deliverables**:
-- [ ] MCP server implementation
-- [ ] Tools: remember, recall, forget
-- [ ] Resources: memory browser
-- [ ] Prompts: context injection templates
+- [x] MCP server implementation using modelcontextprotocol/go-sdk
+- [x] Tools: remember, recall, forget, list_memories, get_context
+- [x] Resources: namespaces, memories, stats
+- [x] Prompts: inject_context, summarize_memories, explore_memories
+- [x] Standalone mcp-server binary
 
 ---
 
-### Phase 6: OpenAI Proxy (🔲 PLANNED)
+### Phase 6: CLI Tool (✅ COMPLETE)
+
+**Goal**: Command-line interface for MAIA management
+
+**Deliverables**:
+- [x] maiactl CLI using Cobra
+- [x] Memory commands: create, list, get, update, delete, search
+- [x] Namespace commands: create, list, get, update, delete
+- [x] Context command with zone statistics
+- [x] Stats command for server statistics
+- [x] JSON and table output formats
+
+---
+
+### Phase 7: OpenAI Proxy (🔲 PLANNED)
 
 **Goal**: Drop-in replacement for OpenAI API with automatic memory
 
@@ -152,7 +164,7 @@ MAIA provides **position-aware context assembly** that:
 
 ---
 
-### Phase 7: SDKs (🔲 PLANNED)
+### Phase 8: SDKs (🔲 PLANNED)
 
 **Goal**: Client libraries for common languages
 
@@ -163,7 +175,7 @@ MAIA provides **position-aware context assembly** that:
 
 ---
 
-### Phase 8: Production Hardening (🔲 PLANNED)
+### Phase 9: Production Hardening (🔲 PLANNED)
 
 **Goal**: Production-ready deployment
 

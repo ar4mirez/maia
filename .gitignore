@@ -5,9 +5,9 @@
 *.dll
 *.so
 *.dylib
-maia
-maiactl
-maia-mcp
+/maia
+/maiactl
+/maia-mcp
 
 # Test binary, built with `go test -c`
 *.test
