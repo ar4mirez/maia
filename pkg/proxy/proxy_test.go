@@ -75,7 +75,7 @@ func TestProxy_handleChatCompletion_NonStreaming(t *testing.T) {
 				TotalTokens:      30,
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer backend.Close()
 
@@ -131,7 +131,7 @@ func TestProxy_handleChatCompletion_InvalidRequest(t *testing.T) {
 func TestProxy_handleChatCompletion_BackendError(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(ErrorResponse{
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
 			Error: &APIError{
 				Message: "Invalid API key",
 				Type:    "invalid_request_error",
@@ -168,7 +168,7 @@ func TestProxy_handleListModels(t *testing.T) {
 				{ID: "gpt-4", Object: "model", OwnedBy: "openai"},
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer backend.Close()
 
@@ -326,12 +326,12 @@ func TestProxy_handleChatCompletion_Streaming(t *testing.T) {
 		}
 
 		for _, chunk := range chunks {
-			w.Write([]byte("data: " + chunk + "\n\n"))
+			_, _ = w.Write([]byte("data: " + chunk + "\n\n"))
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
 		}
-		w.Write([]byte("data: [DONE]\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer backend.Close()
 

@@ -45,7 +45,7 @@ func TestClient_ChatCompletion(t *testing.T) {
 					},
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
+				_ = json.NewEncoder(w).Encode(resp)
 			},
 			request: &ChatCompletionRequest{
 				Model: "gpt-4",
@@ -65,7 +65,7 @@ func TestClient_ChatCompletion(t *testing.T) {
 			name: "error response",
 			serverResponse: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(ErrorResponse{
+				_ = json.NewEncoder(w).Encode(ErrorResponse{
 					Error: &APIError{
 						Message: "Invalid API key",
 						Type:    "invalid_request_error",
@@ -91,7 +91,7 @@ func TestClient_ChatCompletion(t *testing.T) {
 			name: "non-json error response",
 			serverResponse: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte("Internal Server Error"))
+				_, _ = w.Write([]byte("Internal Server Error"))
 			},
 			request: &ChatCompletionRequest{
 				Model:    "gpt-4",
@@ -148,9 +148,9 @@ func TestClient_ChatCompletionStream(t *testing.T) {
 				}
 
 				for _, chunk := range chunks {
-					w.Write([]byte("data: " + chunk + "\n\n"))
+					_, _ = w.Write([]byte("data: " + chunk + "\n\n"))
 				}
-				w.Write([]byte("data: [DONE]\n\n"))
+				_, _ = w.Write([]byte("data: [DONE]\n\n"))
 			},
 			checkFn: func(t *testing.T, reader *StreamReader, err error) {
 				require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestClient_ChatCompletionStream(t *testing.T) {
 			name: "error response",
 			serverResponse: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusUnauthorized)
-				json.NewEncoder(w).Encode(ErrorResponse{
+				_ = json.NewEncoder(w).Encode(ErrorResponse{
 					Error: &APIError{
 						Message: "Invalid API key",
 						Type:    "invalid_request_error",
@@ -231,7 +231,7 @@ func TestClient_ListModels(t *testing.T) {
 				{ID: "gpt-3.5-turbo", Object: "model", OwnedBy: "openai"},
 			},
 		}
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 

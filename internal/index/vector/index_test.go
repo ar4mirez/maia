@@ -264,14 +264,14 @@ func BenchmarkBruteForceIndex_Search(b *testing.B) {
 	// Add 1000 vectors
 	for i := 0; i < 1000; i++ {
 		emb, _ := provider.Embed(ctx, string(rune(i)))
-		idx.Add(ctx, string(rune(i)), emb)
+		_ = idx.Add(ctx, string(rune(i)), emb)
 	}
 
 	query, _ := provider.Embed(ctx, "test query")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx.Search(ctx, query, 10)
+		_, _ = idx.Search(ctx, query, 10)
 	}
 }
 
@@ -284,14 +284,14 @@ func BenchmarkHNSWIndex_Search(b *testing.B) {
 	// Add 1000 vectors
 	for i := 0; i < 1000; i++ {
 		emb, _ := provider.Embed(ctx, string(rune(i)))
-		idx.Add(ctx, string(rune(i)), emb)
+		_ = idx.Add(ctx, string(rune(i)), emb)
 	}
 
 	query, _ := provider.Embed(ctx, "test query")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx.Search(ctx, query, 10)
+		_, _ = idx.Search(ctx, query, 10)
 	}
 }
 

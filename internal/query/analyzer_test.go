@@ -261,6 +261,6 @@ func BenchmarkAnalyzer_Analyze(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		analyzer.Analyze(ctx, query)
+		_, _ = analyzer.Analyze(ctx, query)
 	}
 }

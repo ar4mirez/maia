@@ -315,7 +315,7 @@ func BenchmarkBleveIndex_Index(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx.Index(ctx, string(rune(i)), doc)
+		_ = idx.Index(ctx, string(rune(i)), doc)
 	}
 }
 
@@ -332,14 +332,14 @@ func BenchmarkBleveIndex_Search(b *testing.B) {
 			Content:   "The quick brown fox jumps over the lazy dog number " + string(rune(i)),
 			Namespace: "bench",
 		}
-		idx.Index(ctx, string(rune(i)), doc)
+		_ = idx.Index(ctx, string(rune(i)), doc)
 	}
 
 	opts := &SearchOptions{Limit: 10}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		idx.Search(ctx, "quick fox", opts)
+		_, _ = idx.Search(ctx, "quick fox", opts)
 	}
 }
 

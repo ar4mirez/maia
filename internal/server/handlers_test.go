@@ -26,15 +26,14 @@ type mockStore struct {
 	memories   map[string]*storage.Memory
 	namespaces map[string]*storage.Namespace
 	memCounter int
-	nsCounter  int
 
 	// Control error responses
-	errOnCreate   error
-	errOnGet      error
-	errOnUpdate   error
-	errOnDelete   error
-	errOnSearch   error
-	errOnStats    error
+	errOnCreate error
+	errOnGet    error
+	errOnUpdate error
+	errOnDelete error
+	errOnSearch error
+	errOnStats  error
 }
 
 func newMockStore() *mockStore {
@@ -444,7 +443,7 @@ func TestGetMemory(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var created storage.Memory
-		json.Unmarshal(w.Body.Bytes(), &created)
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 		// Get the memory
 		w = performRequest(srv.Router(), "GET", "/v1/memories/"+created.ID, nil)
@@ -486,7 +485,7 @@ func TestUpdateMemory(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var created storage.Memory
-		json.Unmarshal(w.Body.Bytes(), &created)
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 		// Update the memory
 		newContent := "Updated content"
@@ -531,7 +530,7 @@ func TestDeleteMemory(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var created storage.Memory
-		json.Unmarshal(w.Body.Bytes(), &created)
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 		// Delete the memory
 		w = performRequest(srv.Router(), "DELETE", "/v1/memories/"+created.ID, nil)
@@ -684,7 +683,7 @@ func TestGetNamespace(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var created storage.Namespace
-		json.Unmarshal(w.Body.Bytes(), &created)
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 		// Get by ID
 		w = performRequest(srv.Router(), "GET", "/v1/namespaces/"+created.ID, nil)
@@ -742,7 +741,7 @@ func TestUpdateNamespace(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var created storage.Namespace
-		json.Unmarshal(w.Body.Bytes(), &created)
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 		// Update namespace
 		updateReq := UpdateNamespaceRequest{
@@ -786,7 +785,7 @@ func TestDeleteNamespace(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var created storage.Namespace
-		json.Unmarshal(w.Body.Bytes(), &created)
+		_ = json.Unmarshal(w.Body.Bytes(), &created)
 
 		// Delete namespace
 		w = performRequest(srv.Router(), "DELETE", "/v1/namespaces/"+created.ID, nil)
@@ -861,7 +860,7 @@ func TestListNamespaceMemories(t *testing.T) {
 		require.Equal(t, http.StatusCreated, w.Code)
 
 		var ns storage.Namespace
-		json.Unmarshal(w.Body.Bytes(), &ns)
+		_ = json.Unmarshal(w.Body.Bytes(), &ns)
 
 		// Create memories in the namespace
 		for i := 0; i < 3; i++ {
@@ -1082,7 +1081,7 @@ func TestHandleStorageErrors(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, w.Code)
 
 		var resp ErrorResponse
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.Equal(t, "NOT_FOUND", resp.Code)
 	})
 
@@ -1097,7 +1096,7 @@ func TestHandleStorageErrors(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, w.Code)
 
 		var resp ErrorResponse
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.Equal(t, "ALREADY_EXISTS", resp.Code)
 	})
 
@@ -1111,7 +1110,7 @@ func TestHandleStorageErrors(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 
 		var resp ErrorResponse
-		json.Unmarshal(w.Body.Bytes(), &resp)
+		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		assert.Equal(t, "INVALID_INPUT", resp.Code)
 	})
 }

@@ -679,7 +679,7 @@ func BenchmarkRetriever_Retrieve(b *testing.B) {
 			Type:      storage.MemoryTypeSemantic,
 		})
 		emb, _ := embedder.Embed(ctx, mem.Content)
-		vectorIndex.Add(ctx, mem.ID, emb)
+		_ = vectorIndex.Add(ctx, mem.ID, emb)
 	}
 
 	retriever := NewRetriever(store, vectorIndex, nil, embedder, DefaultConfig())

@@ -54,7 +54,7 @@ func TestClient_Health(t *testing.T) {
 		assert.Equal(t, "/health", r.URL.Path)
 		assert.Equal(t, http.MethodGet, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(HealthResponse{Status: "healthy", Service: "maia"})
+		_ = json.NewEncoder(w).Encode(HealthResponse{Status: "healthy", Service: "maia"})
 	}))
 	defer server.Close()
 
@@ -70,7 +70,7 @@ func TestClient_Ready(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/ready", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ready"})
 	}))
 	defer server.Close()
 
@@ -84,7 +84,7 @@ func TestClient_Stats(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/stats", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Stats{
+		_ = json.NewEncoder(w).Encode(Stats{
 			TotalMemories:   100,
 			TotalNamespaces: 5,
 		})
@@ -119,7 +119,7 @@ func TestClient_CreateMemory(t *testing.T) {
 				assert.Equal(t, http.MethodPost, r.Method)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(Memory{
+				_ = json.NewEncoder(w).Encode(Memory{
 					ID:        "mem-123",
 					Namespace: "test",
 					Content:   "Test memory",
@@ -159,7 +159,7 @@ func TestClient_CreateMemory(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "internal error"})
 			},
 			wantErr: true,
 		},
@@ -210,7 +210,7 @@ func TestClient_GetMemory(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/v1/memories/mem-123", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(Memory{
+				_ = json.NewEncoder(w).Encode(Memory{
 					ID:      "mem-123",
 					Content: "Test memory",
 				})
@@ -228,7 +228,7 @@ func TestClient_GetMemory(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusNotFound)
-				json.NewEncoder(w).Encode(map[string]string{
+				_ = json.NewEncoder(w).Encode(map[string]string{
 					"error": "memory not found",
 					"code":  "NOT_FOUND",
 				})
@@ -282,7 +282,7 @@ func TestClient_UpdateMemory(t *testing.T) {
 				assert.Equal(t, "/v1/memories/mem-123", r.URL.Path)
 				assert.Equal(t, http.MethodPut, r.Method)
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(Memory{
+				_ = json.NewEncoder(w).Encode(Memory{
 					ID:      "mem-123",
 					Content: "Updated content",
 				})
@@ -345,7 +345,7 @@ func TestClient_DeleteMemory(t *testing.T) {
 				assert.Equal(t, "/v1/memories/mem-123", r.URL.Path)
 				assert.Equal(t, http.MethodDelete, r.Method)
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(DeleteResponse{Deleted: true})
+				_ = json.NewEncoder(w).Encode(DeleteResponse{Deleted: true})
 			},
 			wantErr: false,
 		},
@@ -388,7 +388,7 @@ func TestClient_SearchMemories(t *testing.T) {
 		assert.Equal(t, "/v1/memories/search", r.URL.Path)
 		assert.Equal(t, http.MethodPost, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ListResponse[*SearchResult]{
+		_ = json.NewEncoder(w).Encode(ListResponse[*SearchResult]{
 			Data: []*SearchResult{
 				{Memory: &Memory{ID: "mem-1", Content: "Result 1"}, Score: 0.9},
 				{Memory: &Memory{ID: "mem-2", Content: "Result 2"}, Score: 0.8},
@@ -430,7 +430,7 @@ func TestClient_CreateNamespace(t *testing.T) {
 				assert.Equal(t, "/v1/namespaces", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusCreated)
-				json.NewEncoder(w).Encode(Namespace{
+				_ = json.NewEncoder(w).Encode(Namespace{
 					ID:   "ns-123",
 					Name: "test-namespace",
 				})
@@ -483,7 +483,7 @@ func TestClient_GetNamespace(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/namespaces/test-namespace", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(Namespace{
+		_ = json.NewEncoder(w).Encode(Namespace{
 			ID:   "ns-123",
 			Name: "test-namespace",
 		})
@@ -503,7 +503,7 @@ func TestClient_ListNamespaces(t *testing.T) {
 		assert.Equal(t, "/v1/namespaces", r.URL.Path)
 		assert.Equal(t, "10", r.URL.Query().Get("limit"))
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ListResponse[*Namespace]{
+		_ = json.NewEncoder(w).Encode(ListResponse[*Namespace]{
 			Data: []*Namespace{
 				{ID: "ns-1", Name: "namespace-1"},
 				{ID: "ns-2", Name: "namespace-2"},
@@ -526,7 +526,7 @@ func TestClient_ListNamespaceMemories(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/namespaces/test/memories", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ListResponse[*Memory]{
+		_ = json.NewEncoder(w).Encode(ListResponse[*Memory]{
 			Data: []*Memory{
 				{ID: "mem-1", Content: "Memory 1"},
 				{ID: "mem-2", Content: "Memory 2"},
@@ -562,7 +562,7 @@ func TestClient_GetContext(t *testing.T) {
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/v1/context", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(ContextResponse{
+				_ = json.NewEncoder(w).Encode(ContextResponse{
 					Content:     "User prefers dark mode.",
 					TokenCount:  10,
 					TokenBudget: 2000,
@@ -616,7 +616,7 @@ func TestClient_GetContext(t *testing.T) {
 func TestClient_Remember(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input CreateMemoryInput
-		json.NewDecoder(r.Body).Decode(&input)
+		_ = json.NewDecoder(r.Body).Decode(&input)
 		assert.Equal(t, "test", input.Namespace)
 		assert.Equal(t, "User likes coffee", input.Content)
 		assert.Equal(t, MemoryTypeSemantic, input.Type)
@@ -624,7 +624,7 @@ func TestClient_Remember(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(Memory{
+		_ = json.NewEncoder(w).Encode(Memory{
 			ID:        "mem-123",
 			Namespace: input.Namespace,
 			Content:   input.Content,
@@ -643,14 +643,14 @@ func TestClient_Remember(t *testing.T) {
 func TestClient_Recall(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var input GetContextInput
-		json.NewDecoder(r.Body).Decode(&input)
+		_ = json.NewDecoder(r.Body).Decode(&input)
 		assert.Equal(t, "user preferences", input.Query)
 		assert.Equal(t, "test", input.Namespace)
 		assert.Equal(t, 1000, input.TokenBudget)
 		assert.True(t, input.IncludeScores)
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(ContextResponse{
+		_ = json.NewEncoder(w).Encode(ContextResponse{
 			Content:    "User likes coffee",
 			TokenCount: 5,
 		})
@@ -673,7 +673,7 @@ func TestClient_Forget(t *testing.T) {
 		assert.Equal(t, "/v1/memories/mem-123", r.URL.Path)
 		assert.Equal(t, http.MethodDelete, r.Method)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(DeleteResponse{Deleted: true})
+		_ = json.NewEncoder(w).Encode(DeleteResponse{Deleted: true})
 	}))
 	defer server.Close()
 
