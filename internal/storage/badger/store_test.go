@@ -961,3 +961,435 @@ func TestStore_UpdateMemory_AllFields(t *testing.T) {
 	assert.Equal(t, embedding, updated.Embedding)
 	assert.True(t, updated.UpdatedAt.After(created.UpdatedAt))
 }
+
+func TestStore_New_NilOptions(t *testing.T) {
+	_, err := New(nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "options cannot be nil")
+}
+
+func TestStore_New_EmptyDataDir(t *testing.T) {
+	_, err := New(&Options{DataDir: ""})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "data directory is required")
+}
+
+func TestStore_New_WithSyncWrites(t *testing.T) {
+	dir, err := os.MkdirTemp("", "maia-test-sync-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	store, err := New(&Options{
+		DataDir:    dir,
+		SyncWrites: true,
+	})
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Verify store works with sync writes enabled
+	ctx := context.Background()
+	_, err = store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Sync write test",
+	})
+	require.NoError(t, err)
+}
+
+func TestStore_Close_Idempotent(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	// First close should succeed
+	err := store.Close()
+	require.NoError(t, err)
+
+	// Second close should also succeed (idempotent)
+	err = store.Close()
+	require.NoError(t, err)
+}
+
+func TestStore_CreateMemory_DefaultValues(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memory with minimal fields (no type, source, confidence)
+	input := &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Minimal memory",
+	}
+
+	mem, err := store.CreateMemory(ctx, input)
+	require.NoError(t, err)
+
+	// Verify defaults were applied
+	assert.Equal(t, storage.MemoryTypeSemantic, mem.Type)
+	assert.Equal(t, storage.MemorySourceUser, mem.Source)
+	assert.Equal(t, 1.0, mem.Confidence)
+}
+
+func TestStore_CreateNamespace_EmptyName(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+		Name: "",
+	})
+	assert.Error(t, err)
+
+	var invalidInput *storage.ErrInvalidInput
+	assert.ErrorAs(t, err, &invalidInput)
+}
+
+func TestStore_SearchMemories_NilOptions(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Test memory",
+	})
+	require.NoError(t, err)
+
+	// Search with nil options (should use defaults)
+	results, err := store.SearchMemories(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+}
+
+func TestStore_SearchMemories_ZeroLimit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Test memory",
+	})
+	require.NoError(t, err)
+
+	// Search with zero limit (should use default of 100)
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{Limit: 0})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+}
+
+func TestStore_SearchMemories_WithOffset(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-offset"
+
+	// Create 5 memories
+	for i := 0; i < 5; i++ {
+		_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+			Namespace: namespace,
+			Content:   "Memory " + string(rune('A'+i)),
+		})
+		require.NoError(t, err)
+	}
+
+	// Search with offset
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		Offset:    2,
+		Limit:     10,
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 3) // 5 - 2 = 3
+}
+
+func TestStore_SearchMemories_NoNamespace(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories in different namespaces
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "ns1",
+		Content:   "Memory in ns1",
+	})
+	require.NoError(t, err)
+
+	_, err = store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "ns2",
+		Content:   "Memory in ns2",
+	})
+	require.NoError(t, err)
+
+	// Search without namespace filter - should find all
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{})
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+}
+
+func TestStore_SearchMemories_MultipleTypes(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-multi-types"
+
+	// Create memories with different types
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Semantic memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	_, err = store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Episodic memory",
+		Type:      storage.MemoryTypeEpisodic,
+	})
+	require.NoError(t, err)
+
+	_, err = store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Working memory",
+		Type:      storage.MemoryTypeWorking,
+	})
+	require.NoError(t, err)
+
+	// Search by multiple types
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		Types:     []storage.MemoryType{storage.MemoryTypeSemantic, storage.MemoryTypeEpisodic},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 2)
+}
+
+func TestStore_ListMemories_NilOptions(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-nil-opts"
+
+	// Create a memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Test memory",
+	})
+	require.NoError(t, err)
+
+	// List with nil options (should use defaults)
+	memories, err := store.ListMemories(ctx, namespace, nil)
+	require.NoError(t, err)
+	assert.Len(t, memories, 1)
+}
+
+func TestStore_ListMemories_ZeroLimit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-zero-limit"
+
+	// Create a memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Test memory",
+	})
+	require.NoError(t, err)
+
+	// List with zero limit (should use default of 100)
+	memories, err := store.ListMemories(ctx, namespace, &storage.ListOptions{Limit: 0})
+	require.NoError(t, err)
+	assert.Len(t, memories, 1)
+}
+
+func TestStore_ListNamespaces_NilOptions(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a namespace
+	_, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+		Name: "test-ns",
+	})
+	require.NoError(t, err)
+
+	// List with nil options (should use defaults)
+	namespaces, err := store.ListNamespaces(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, namespaces, 1)
+}
+
+func TestStore_ListNamespaces_ZeroLimit(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a namespace
+	_, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+		Name: "test-ns",
+	})
+	require.NoError(t, err)
+
+	// List with zero limit (should use default of 100)
+	namespaces, err := store.ListNamespaces(ctx, &storage.ListOptions{Limit: 0})
+	require.NoError(t, err)
+	assert.Len(t, namespaces, 1)
+}
+
+func TestStore_CreateNamespace_WithParent(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create parent namespace
+	parent, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+		Name: "parent-ns",
+	})
+	require.NoError(t, err)
+
+	// Create child namespace
+	child, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+		Name:   "child-ns",
+		Parent: parent.ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, parent.ID, child.Parent)
+}
+
+func TestStore_CreateNamespace_WithTemplate(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create namespace with template
+	ns, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+		Name:     "template-ns",
+		Template: "custom-template",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "custom-template", ns.Template)
+}
+
+func TestStore_UpdateMemory_PartialUpdate(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a memory
+	input := &storage.CreateMemoryInput{
+		Namespace:  "test",
+		Content:    "Original content",
+		Confidence: 0.5,
+		Tags:       []string{"original"},
+	}
+	created, err := store.CreateMemory(ctx, input)
+	require.NoError(t, err)
+
+	// Update only confidence (leave content unchanged)
+	newConfidence := 0.9
+	updateInput := &storage.UpdateMemoryInput{
+		Confidence: &newConfidence,
+	}
+
+	updated, err := store.UpdateMemory(ctx, created.ID, updateInput)
+	require.NoError(t, err)
+	assert.Equal(t, created.Content, updated.Content) // Content unchanged
+	assert.Equal(t, newConfidence, updated.Confidence)
+}
+
+func TestStore_BatchCreateMemories_Empty(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create with empty slice
+	memories, err := store.BatchCreateMemories(ctx, []*storage.CreateMemoryInput{})
+	require.NoError(t, err)
+	assert.Len(t, memories, 0)
+}
+
+func TestStore_BatchDeleteMemories_Empty(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Delete with empty slice
+	err := store.BatchDeleteMemories(ctx, []string{})
+	require.NoError(t, err)
+}
+
+func TestStore_CreateMemory_WithMetadata(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	metadata := map[string]interface{}{
+		"key1": "value1",
+		"key2": 42,
+		"key3": true,
+	}
+
+	input := &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Memory with metadata",
+		Metadata:  metadata,
+	}
+
+	mem, err := store.CreateMemory(ctx, input)
+	require.NoError(t, err)
+
+	// Retrieve memory from store to test JSON round-trip
+	retrieved, err := store.GetMemory(ctx, mem.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "value1", retrieved.Metadata["key1"])
+	assert.Equal(t, float64(42), retrieved.Metadata["key2"]) // JSON numbers are float64
+	assert.Equal(t, true, retrieved.Metadata["key3"])
+}
+
+func TestStore_CreateMemory_WithRelations(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	relations := []storage.Relation{
+		{
+			TargetID: "related-1",
+			Type:     storage.RelationTypeRelatedTo,
+			Weight:   0.8,
+		},
+		{
+			TargetID: "related-2",
+			Type:     storage.RelationTypeSupersedes,
+			Weight:   1.0,
+		},
+	}
+
+	input := &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Memory with relations",
+		Relations: relations,
+	}
+
+	mem, err := store.CreateMemory(ctx, input)
+	require.NoError(t, err)
+	assert.Len(t, mem.Relations, 2)
+	assert.Equal(t, "related-1", mem.Relations[0].TargetID)
+}
