@@ -116,6 +116,279 @@ curl -X POST http://localhost:8080/v1/context \
   }'
 ```
 
+## CLI Tool (maiactl)
+
+MAIA includes a CLI tool for managing memories and namespaces.
+
+```bash
+# Build the CLI
+go build -o maiactl ./cmd/maiactl
+
+# Or install
+go install ./cmd/maiactl
+```
+
+### Memory Operations
+
+```bash
+# Create a memory
+maiactl memory create -n default -c "User prefers dark mode" -t semantic
+
+# List memories
+maiactl memory list -n default
+
+# Search memories
+maiactl memory search -q "preferences" -n default
+
+# Get a specific memory
+maiactl memory get <memory-id>
+
+# Delete a memory
+maiactl memory delete <memory-id>
+```
+
+### Namespace Operations
+
+```bash
+# Create a namespace
+maiactl namespace create my-project --token-budget 8000
+
+# List namespaces
+maiactl namespace list
+
+# Get namespace details
+maiactl namespace get my-project
+```
+
+### Context Assembly
+
+```bash
+# Get assembled context for a query
+maiactl context "What are the user's preferences?" -n default -b 2000
+```
+
+### Server Statistics
+
+```bash
+maiactl stats
+```
+
+### Global Flags
+
+| Flag | Environment | Description |
+|------|-------------|-------------|
+| `--server` | `MAIA_URL` | Server URL (default: `http://localhost:8080`) |
+| `--json` | | Output in JSON format |
+
+## Authentication
+
+MAIA supports API key authentication for production deployments.
+
+### Auth Configuration
+
+```yaml
+# config.yaml
+auth:
+  enabled: true
+  api_keys:
+    - key: "your-api-key-here"
+      namespaces: ["default", "user:*"]  # Allowed namespaces (supports wildcards)
+    - key: "admin-key"
+      namespaces: ["*"]  # Access to all namespaces
+```
+
+### Using API Keys
+
+API keys can be provided via:
+
+1. **Header**: `X-API-Key: your-api-key`
+2. **Bearer Token**: `Authorization: Bearer your-api-key`
+3. **Query Parameter**: `?api_key=your-api-key`
+
+```bash
+# Using header
+curl -H "X-API-Key: your-api-key" http://localhost:8080/v1/memories
+
+# Using bearer token
+curl -H "Authorization: Bearer your-api-key" http://localhost:8080/v1/memories
+```
+
+## MCP Server Integration
+
+MAIA can run as an MCP (Model Context Protocol) server for integration with Claude, Cursor, and other MCP-compatible tools.
+
+### Running the MCP Server
+
+```bash
+go run ./cmd/mcp-server
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `remember` | Store a new memory |
+| `recall` | Retrieve context based on a query |
+| `forget` | Delete a memory |
+| `list_memories` | List all memories in a namespace |
+| `get_context` | Get assembled context with position-aware optimization |
+
+### Available Resources
+
+| Resource | Description |
+|----------|-------------|
+| `namespaces` | List all available namespaces |
+| `memories` | List memories (namespace parameter) |
+| `stats` | Server statistics |
+
+### Available Prompts
+
+| Prompt | Description |
+|--------|-------------|
+| `inject_context` | Inject MAIA context into a conversation |
+| `summarize_memories` | Summarize memories in a namespace |
+| `explore_memories` | Explore and understand stored memories |
+
+## OpenAI-Compatible Proxy
+
+MAIA provides an OpenAI-compatible proxy that automatically injects relevant context and extracts memories from responses.
+
+### Proxy Configuration
+
+```yaml
+proxy:
+  enabled: true
+  backend: "https://api.openai.com"  # Or any OpenAI-compatible API
+  default_namespace: "default"
+  context_position: "system"  # system, first_user, or before_last
+```
+
+### Usage
+
+Point your OpenAI client to MAIA:
+
+```bash
+curl -X POST http://localhost:8080/proxy/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OPENAI_API_KEY" \
+  -H "X-MAIA-Namespace: default" \
+  -d '{
+    "model": "gpt-4",
+    "messages": [{"role": "user", "content": "What do you know about me?"}]
+  }'
+```
+
+### Proxy Headers
+
+| Header | Description |
+|--------|-------------|
+| `X-MAIA-Namespace` | Target namespace for memory operations |
+| `X-MAIA-Skip-Memory` | Skip memory retrieval for this request |
+| `X-MAIA-Skip-Extract` | Skip memory extraction from response |
+| `X-MAIA-Token-Budget` | Override token budget for context |
+
+## SDKs
+
+### Go SDK
+
+```go
+import "github.com/ar4mirez/maia/pkg/maia"
+
+client := maia.New(maia.WithBaseURL("http://localhost:8080"))
+
+// Store a memory
+mem, _ := client.Remember(ctx, "default", "User prefers dark mode")
+
+// Recall context
+context, _ := client.Recall(ctx, "user preferences",
+    maia.WithNamespace("default"),
+    maia.WithTokenBudget(2000),
+)
+
+// Forget a memory
+client.Forget(ctx, mem.ID)
+```
+
+### TypeScript SDK
+
+```typescript
+import { MAIAClient } from '@maia/sdk';
+
+const client = new MAIAClient({ baseUrl: 'http://localhost:8080' });
+
+// Store a memory
+const memory = await client.remember('default', 'User prefers dark mode');
+
+// Recall context
+const context = await client.recall('user preferences', {
+  namespace: 'default',
+  tokenBudget: 2000,
+});
+
+// Forget a memory
+await client.forget(memory.id);
+```
+
+### Python SDK
+
+```python
+from maia import MAIAClient, AsyncMAIAClient
+
+# Sync client
+client = MAIAClient(base_url="http://localhost:8080")
+memory = client.remember("default", "User prefers dark mode")
+context = client.recall("user preferences", namespace="default")
+client.forget(memory.id)
+
+# Async client
+async with AsyncMAIAClient() as client:
+    memory = await client.remember("default", "User prefers dark mode")
+    context = await client.recall("user preferences")
+```
+
+## Deployment
+
+### Docker
+
+```bash
+# Build the image
+docker build -t maia .
+
+# Run
+docker run -p 8080:8080 -v maia-data:/data maia
+```
+
+### Docker Compose
+
+```bash
+docker-compose up -d
+```
+
+### Kubernetes
+
+Kubernetes manifests are available in `deployments/kubernetes/`:
+
+```bash
+# Apply all manifests
+kubectl apply -k deployments/kubernetes/
+
+# Or apply individually
+kubectl apply -f deployments/kubernetes/configmap.yaml
+kubectl apply -f deployments/kubernetes/secret.yaml
+kubectl apply -f deployments/kubernetes/deployment.yaml
+kubectl apply -f deployments/kubernetes/service.yaml
+```
+
+## Metrics & Monitoring
+
+MAIA exposes Prometheus metrics at `/metrics`:
+
+- `maia_http_requests_total` - Total HTTP requests
+- `maia_http_request_duration_seconds` - Request latency histogram
+- `maia_memory_operations_total` - Memory operations count
+- `maia_search_operations_total` - Search operations count
+- `maia_context_assembly_duration_seconds` - Context assembly latency
+
 ## Architecture
 
 ```
@@ -206,11 +479,13 @@ maia/
 ## Roadmap
 
 - [x] **Phase 1**: Foundation (storage, basic API)
-- [ ] **Phase 2**: Intelligence (embeddings, vector search)
-- [ ] **Phase 3**: Context Assembly (position-aware optimization)
-- [ ] **Phase 4**: MCP Integration
-- [ ] **Phase 5**: Proxy + SDKs
-- [ ] **Phase 6**: Production Hardening
+- [x] **Phase 2**: Intelligence (query analysis, embeddings, vector search)
+- [x] **Phase 3**: Context Assembly (position-aware optimization)
+- [x] **Phase 4**: MCP Integration
+- [x] **Phase 5**: CLI Tool (maiactl)
+- [x] **Phase 6**: OpenAI-Compatible Proxy
+- [x] **Phase 7**: SDKs (Go, TypeScript, Python)
+- [x] **Phase 8**: Production Hardening (auth, metrics, tracing, Kubernetes)
 
 ## Contributing
 
