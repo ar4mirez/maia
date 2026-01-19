@@ -1,0 +1,73 @@
+# Binaries
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+maia
+maiactl
+maia-mcp
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+go.work.sum
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Data directories (local development)
+/data/
+*.db
+*.db-journal
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Build artifacts
+dist/
+
+# Generated files
+*.pb.go
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Debug files
+debug
+*.dSYM/
+
+# Profiling
+*.prof
+*.pprof
+
+# Kubernetes secrets (if any)
+*-secret.yaml
+*-secrets.yaml

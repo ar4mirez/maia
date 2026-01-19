@@ -1,0 +1,61 @@
+version: 1.7.0
+installed:
+    languages:
+        - typescript
+        - python
+        - go
+        - rust
+        - kotlin
+        - java
+        - csharp
+        - php
+        - swift
+        - cpp
+        - ruby
+        - sql
+        - shell
+        - r
+        - dart
+        - html-css
+        - lua
+        - assembly
+        - cuda
+        - solidity
+        - zig
+    frameworks:
+        - react
+        - nextjs
+        - express
+        - django
+        - fastapi
+        - flask
+        - gin
+        - echo
+        - fiber
+        - axum
+        - actix-web
+        - rocket
+        - spring-boot-kotlin
+        - ktor
+        - android-compose
+        - spring-boot-java
+        - quarkus
+        - micronaut
+        - aspnet-core
+        - blazor
+        - unity
+        - laravel
+        - symfony
+        - wordpress
+        - swiftui
+        - uikit
+        - vapor
+        - rails
+        - sinatra
+        - hanami
+        - flutter
+        - shelf
+        - dart-frog
+    workflows:
+        - all
+registry: https://github.com/ar4mirez/aicof

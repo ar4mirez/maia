@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go mod init:*)",
+      "Bash(go get:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(gh repo create:*)",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: initial MAIA implementation \\(Phase 1 - Foundation\\)\n\n- BadgerDB storage layer with full CRUD operations for memories and namespaces\n- REST API server with Gin framework\n- Configuration management with Viper\n- Structured logging with Zap\n- 20 unit tests passing with good coverage\n- AICoF workflow setup with adapted prompt.md\n\nMAIA is an AI-native distributed memory system that acts as an intelligent\ninterceptor between applications and LLMs. It solves the fundamental problem\nof context window limitations by intelligently managing what information\ngoes into that window.\n\nKey differentiators:\n- Distributed-first architecture \\(vs centralized approaches\\)\n- Position-aware context assembly \\(solves \"context rot\"\\)\n- Sub-200ms latency target\n- Flexible namespace model\n- Multiple integration patterns \\(MCP, proxy, SDK\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}
