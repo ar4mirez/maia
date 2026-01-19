@@ -8,7 +8,7 @@
 
 ## Current Phase
 
-**Phase 7: CLI Tool** - COMPLETE
+**Phase 8: OpenAI Proxy** - COMPLETE
 
 ---
 
@@ -229,11 +229,63 @@ maiactl stats
 
 ---
 
+### SESSION 8 (2026-01-19) - Phase 8 OpenAI Proxy
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+- [x] Created RFD 0002 for OpenAI Proxy architecture
+- [x] Implemented OpenAI API types (ChatCompletionRequest/Response)
+- [x] Implemented backend HTTP client with streaming support
+- [x] Implemented context injection logic with multiple position strategies
+- [x] Implemented main proxy handler with SSE streaming
+- [x] Implemented memory extraction from responses with pattern matching
+- [x] Added rate limiting middleware with token bucket algorithm
+- [x] Added comprehensive tests for proxy package (72.0% coverage)
+
+**Key Components**:
+- `pkg/proxy/types.go` - OpenAI API types
+- `pkg/proxy/client.go` - Backend HTTP client with streaming
+- `pkg/proxy/inject.go` - Context injection logic
+- `pkg/proxy/extract.go` - Memory extraction from responses
+- `pkg/proxy/proxy.go` - Main proxy handler
+- `pkg/proxy/ratelimit.go` - Token bucket rate limiter
+- `.agent/rfd/0002-openai-proxy.md` - Architecture decision
+
+**Features**:
+- Full OpenAI chat completions API compatibility
+- SSE streaming support for real-time responses
+- Automatic context injection from MAIA memories
+- Automatic memory extraction from assistant responses
+- Header-based configuration (namespace, token budget, skip flags)
+- Token bucket rate limiting
+- Pass-through to any OpenAI-compatible backend
+
+**Configuration Headers**:
+| Header | Description |
+|--------|-------------|
+| `X-MAIA-Namespace` | Target namespace for memory operations |
+| `X-MAIA-Skip-Memory` | Skip memory retrieval for this request |
+| `X-MAIA-Skip-Extract` | Skip memory extraction from response |
+| `X-MAIA-Token-Budget` | Override token budget for context |
+
+**Context Position Options**:
+- `system` - Prepend to system message (default)
+- `first_user` - Prepend to first user message
+- `before_last` - Insert before last user message
+
+**Notes**:
+- Proxy requires `proxy.backend` configuration to be set
+- Overall coverage: 67.7%
+
+---
+
 ## Next Steps
 
-1. **OpenAI Proxy** - Implement OpenAI-compatible proxy for automatic memory
+1. **SDKs** - Implement Go SDK (pkg/maia), TypeScript SDK, Python SDK
 2. **Documentation** - Add usage examples and API documentation
 3. **Integration Testing** - End-to-end tests with MCP client
+4. **Production Hardening** - Authentication, metrics, Kubernetes deployment
 
 ---
 
