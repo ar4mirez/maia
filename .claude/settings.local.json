@@ -20,7 +20,8 @@
       "Bash(grep:*)",
       "Bash(/tmp/maiactl:*)",
       "Bash(git status:*)",
-      "Bash(git check-ignore:*)"
+      "Bash(git check-ignore:*)",
+      "Bash(ls:*)"
     ]
   }
 }

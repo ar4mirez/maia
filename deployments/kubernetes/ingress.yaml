@@ -1,0 +1,33 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: maia
+  namespace: maia
+  labels:
+    app.kubernetes.io/name: maia
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Uncomment for nginx ingress controller
+    # kubernetes.io/ingress.class: nginx
+    # nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+
+    # Uncomment for cert-manager TLS
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  # Uncomment for TLS
+  # tls:
+  #   - hosts:
+  #       - maia.example.com
+  #     secretName: maia-tls
+  rules:
+    - host: maia.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: maia
+                port:
+                  name: http

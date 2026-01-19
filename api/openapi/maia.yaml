@@ -1,0 +1,800 @@
+openapi: 3.1.0
+info:
+  title: MAIA API
+  description: |
+    MAIA (Memory AI Architecture) is an AI-native distributed memory system for LLM context management.
+
+    ## Authentication
+
+    MAIA supports API key authentication. Include your API key in requests using one of these methods:
+    - Header: `X-API-Key: your-api-key`
+    - Header: `Authorization: Bearer your-api-key`
+    - Query parameter: `?api_key=your-api-key`
+
+    ## Rate Limiting
+
+    API requests are rate limited. When you exceed the limit, you'll receive a `429 Too Many Requests` response.
+
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  contact:
+    name: MAIA Support
+    url: https://github.com/ar4mirez/maia
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://maia.example.com
+    description: Production server
+
+tags:
+  - name: memories
+    description: Memory management operations
+  - name: namespaces
+    description: Namespace management operations
+  - name: context
+    description: Context assembly operations
+  - name: system
+    description: System operations
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns the health status of the service
+      operationId: healthCheck
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: maia
+
+  /ready:
+    get:
+      summary: Readiness check
+      description: Returns whether the service is ready to accept requests
+      operationId: readinessCheck
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      description: Returns Prometheus-formatted metrics
+      operationId: getMetrics
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /v1/memories:
+    post:
+      summary: Create a memory
+      description: Creates a new memory in the specified namespace
+      operationId: createMemory
+      tags:
+        - memories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMemoryRequest'
+      responses:
+        '201':
+          description: Memory created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/memories/{id}:
+    get:
+      summary: Get a memory
+      description: Retrieves a memory by its ID
+      operationId: getMemory
+      tags:
+        - memories
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '200':
+          description: Memory retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '404':
+          description: Memory not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update a memory
+      description: Updates an existing memory
+      operationId: updateMemory
+      tags:
+        - memories
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemoryRequest'
+      responses:
+        '200':
+          description: Memory updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '404':
+          description: Memory not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a memory
+      description: Deletes a memory by its ID
+      operationId: deleteMemory
+      tags:
+        - memories
+      parameters:
+        - $ref: '#/components/parameters/MemoryId'
+      responses:
+        '204':
+          description: Memory deleted successfully
+        '404':
+          description: Memory not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/memories/search:
+    post:
+      summary: Search memories
+      description: Searches for memories matching the query
+      operationId: searchMemories
+      tags:
+        - memories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchMemoriesRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchMemoriesResponse'
+
+  /v1/namespaces:
+    get:
+      summary: List namespaces
+      description: Returns a list of all namespaces
+      operationId: listNamespaces
+      tags:
+        - namespaces
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of namespaces
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNamespacesResponse'
+
+    post:
+      summary: Create a namespace
+      description: Creates a new namespace
+      operationId: createNamespace
+      tags:
+        - namespaces
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNamespaceRequest'
+      responses:
+        '201':
+          description: Namespace created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Namespace already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/namespaces/{id}:
+    get:
+      summary: Get a namespace
+      description: Retrieves a namespace by its ID
+      operationId: getNamespace
+      tags:
+        - namespaces
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+      responses:
+        '200':
+          description: Namespace retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '404':
+          description: Namespace not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update a namespace
+      description: Updates an existing namespace
+      operationId: updateNamespace
+      tags:
+        - namespaces
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNamespaceRequest'
+      responses:
+        '200':
+          description: Namespace updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Namespace'
+        '404':
+          description: Namespace not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a namespace
+      description: Deletes a namespace and all its memories
+      operationId: deleteNamespace
+      tags:
+        - namespaces
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+      responses:
+        '204':
+          description: Namespace deleted successfully
+        '404':
+          description: Namespace not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/namespaces/{id}/memories:
+    get:
+      summary: List namespace memories
+      description: Returns all memories in a namespace
+      operationId: listNamespaceMemories
+      tags:
+        - namespaces
+        - memories
+      parameters:
+        - $ref: '#/components/parameters/NamespaceId'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of memories
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListMemoriesResponse'
+
+  /v1/context:
+    post:
+      summary: Assemble context
+      description: |
+        Assembles context from memories for a given query.
+        Uses position-aware assembly to optimize context for LLM consumption.
+      operationId: getContext
+      tags:
+        - context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetContextRequest'
+      responses:
+        '200':
+          description: Assembled context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContextResponse'
+
+  /v1/stats:
+    get:
+      summary: Get statistics
+      description: Returns system statistics
+      operationId: getStats
+      tags:
+        - system
+      responses:
+        '200':
+          description: System statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatsResponse'
+
+components:
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    MemoryId:
+      name: id
+      in: path
+      required: true
+      description: Memory ID
+      schema:
+        type: string
+        format: uuid
+
+    NamespaceId:
+      name: id
+      in: path
+      required: true
+      description: Namespace ID or name
+      schema:
+        type: string
+
+  schemas:
+    Memory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique memory identifier
+        namespace:
+          type: string
+          description: Namespace the memory belongs to
+        content:
+          type: string
+          description: Memory content
+        type:
+          $ref: '#/components/schemas/MemoryType'
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Additional metadata
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags for categorization
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Confidence score (0-1)
+        source:
+          $ref: '#/components/schemas/MemorySource'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        accessed_at:
+          type: string
+          format: date-time
+        access_count:
+          type: integer
+          description: Number of times accessed
+      required:
+        - id
+        - namespace
+        - content
+        - type
+        - created_at
+
+    MemoryType:
+      type: string
+      enum:
+        - semantic
+        - episodic
+        - working
+        - procedural
+      description: |
+        Type of memory:
+        - semantic: Facts, concepts, knowledge
+        - episodic: Events, experiences, conversations
+        - working: Temporary, session-scoped memories
+        - procedural: Instructions, procedures, workflows
+
+    MemorySource:
+      type: string
+      enum:
+        - user
+        - system
+        - inferred
+        - imported
+      description: Origin of the memory
+
+    CreateMemoryRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+          description: Target namespace
+        content:
+          type: string
+          description: Memory content
+          minLength: 1
+          maxLength: 10000
+        type:
+          $ref: '#/components/schemas/MemoryType'
+        metadata:
+          type: object
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          default: 1.0
+        source:
+          $ref: '#/components/schemas/MemorySource'
+      required:
+        - namespace
+        - content
+
+    UpdateMemoryRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          description: Updated content
+          minLength: 1
+          maxLength: 10000
+        metadata:
+          type: object
+          additionalProperties: true
+        tags:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+
+    SearchMemoriesRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search query
+        namespace:
+          type: string
+          description: Namespace to search in
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryType'
+          description: Filter by memory types
+        tags:
+          type: array
+          items:
+            type: string
+          description: Filter by tags
+        limit:
+          type: integer
+          default: 10
+          maximum: 100
+        offset:
+          type: integer
+          default: 0
+
+    SearchMemoriesResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScoredMemory'
+        count:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    ScoredMemory:
+      allOf:
+        - $ref: '#/components/schemas/Memory'
+        - type: object
+          properties:
+            score:
+              type: number
+              format: float
+              description: Relevance score
+
+    Namespace:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique namespace identifier
+        name:
+          type: string
+          description: Namespace name
+        parent:
+          type: string
+          description: Parent namespace (for hierarchical namespaces)
+        config:
+          $ref: '#/components/schemas/NamespaceConfig'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - created_at
+
+    NamespaceConfig:
+      type: object
+      properties:
+        token_budget:
+          type: integer
+          default: 4000
+          description: Default token budget for context assembly
+        retention_days:
+          type: integer
+          default: 0
+          description: Days to retain memories (0 = forever)
+        max_memories:
+          type: integer
+          default: 0
+          description: Maximum memories (0 = unlimited)
+
+    CreateNamespaceRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Namespace name
+          pattern: '^[a-z0-9][a-z0-9-]*[a-z0-9]$'
+          minLength: 2
+          maxLength: 63
+        parent:
+          type: string
+          description: Parent namespace ID
+        config:
+          $ref: '#/components/schemas/NamespaceConfig'
+      required:
+        - name
+
+    UpdateNamespaceRequest:
+      type: object
+      properties:
+        config:
+          $ref: '#/components/schemas/NamespaceConfig'
+
+    ListNamespacesResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Namespace'
+        count:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    ListMemoriesResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Memory'
+        count:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    GetContextRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Query to retrieve context for
+        namespace:
+          type: string
+          description: Namespace to retrieve from
+        token_budget:
+          type: integer
+          default: 4000
+          description: Maximum tokens to include
+      required:
+        - query
+
+    ContextResponse:
+      type: object
+      properties:
+        context:
+          type: string
+          description: Assembled context text
+        tokens_used:
+          type: integer
+          description: Tokens used in the context
+        token_budget:
+          type: integer
+          description: Token budget that was used
+        memories_included:
+          type: integer
+          description: Number of memories included
+        zones:
+          type: object
+          properties:
+            critical:
+              type: integer
+              description: Memories in critical zone
+            middle:
+              type: integer
+              description: Memories in middle zone
+            recency:
+              type: integer
+              description: Memories in recency zone
+
+    StatsResponse:
+      type: object
+      properties:
+        memories:
+          type: integer
+          description: Total memories stored
+        namespaces:
+          type: integer
+          description: Total namespaces
+        storage_bytes:
+          type: integer
+          description: Storage size in bytes
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error type
+        message:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: string
+          description: Additional details
+      required:
+        - error
+
+security:
+  - ApiKeyHeader: []
+  - BearerAuth: []
