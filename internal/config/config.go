@@ -32,6 +32,21 @@ type Config struct {
 
 	// Security configuration
 	Security SecurityConfig `mapstructure:"security"`
+
+	// Tracing configuration
+	Tracing TracingConfig `mapstructure:"tracing"`
+}
+
+// TracingConfig holds OpenTelemetry tracing settings.
+type TracingConfig struct {
+	Enabled        bool    `mapstructure:"enabled"`
+	ServiceName    string  `mapstructure:"service_name"`
+	ServiceVersion string  `mapstructure:"service_version"`
+	Environment    string  `mapstructure:"environment"`
+	ExporterType   string  `mapstructure:"exporter_type"` // otlp-http, otlp-grpc, noop
+	Endpoint       string  `mapstructure:"endpoint"`
+	Insecure       bool    `mapstructure:"insecure"`
+	SampleRate     float64 `mapstructure:"sample_rate"`
 }
 
 // ServerConfig holds HTTP and gRPC server settings.
@@ -94,6 +109,20 @@ type SecurityConfig struct {
 	TLSCertPath  string `mapstructure:"tls_cert_path"`
 	TLSKeyPath   string `mapstructure:"tls_key_path"`
 	RateLimitRPS int    `mapstructure:"rate_limit_rps"`
+	// Authorization enables namespace-level access control.
+	Authorization AuthorizationConfig `mapstructure:"authorization"`
+}
+
+// AuthorizationConfig holds authorization settings.
+type AuthorizationConfig struct {
+	// Enabled controls whether authorization is active.
+	Enabled bool `mapstructure:"enabled"`
+	// DefaultPolicy is the default access policy: "allow" or "deny".
+	DefaultPolicy string `mapstructure:"default_policy"`
+	// APIKeyPermissions maps API keys to their allowed namespaces.
+	// Format: {"api-key-1": ["ns1", "ns2"], "api-key-2": ["*"]}
+	// Use "*" for all namespaces.
+	APIKeyPermissions map[string][]string `mapstructure:"api_key_permissions"`
 }
 
 // Default configuration values.
@@ -137,9 +166,21 @@ var defaults = map[string]interface{}{
 	"proxy.token_budget":     4000,
 
 	// Security defaults
-	"security.api_key":        "",
-	"security.enable_tls":     false,
-	"security.rate_limit_rps": 100,
+	"security.api_key":                       "",
+	"security.enable_tls":                    false,
+	"security.rate_limit_rps":                100,
+	"security.authorization.enabled":         false,
+	"security.authorization.default_policy":  "allow",
+
+	// Tracing defaults
+	"tracing.enabled":         false,
+	"tracing.service_name":    "maia",
+	"tracing.service_version": "1.0.0",
+	"tracing.environment":     "development",
+	"tracing.exporter_type":   "otlp-http",
+	"tracing.endpoint":        "localhost:4318",
+	"tracing.insecure":        true,
+	"tracing.sample_rate":     1.0,
 }
 
 // Load loads configuration from environment variables and optional config file.

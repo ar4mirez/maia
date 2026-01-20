@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -323,14 +324,14 @@ func (p *Proxy) extractAndStoreMemories(
 		}
 	}
 
-	result, err := p.extractor.Extract(nil, assistantContent, userMessages)
+	result, err := p.extractor.Extract(context.Background(), assistantContent, userMessages)
 	if err != nil {
 		p.logger.Error("memory extraction failed", zap.Error(err))
 		return
 	}
 
 	if len(result.Memories) > 0 {
-		if err := p.extractor.Store(nil, namespace, result.Memories); err != nil {
+		if err := p.extractor.Store(context.Background(), namespace, result.Memories); err != nil {
 			p.logger.Error("memory storage failed", zap.Error(err))
 		} else {
 			p.logger.Debug("stored extracted memories",
@@ -359,14 +360,14 @@ func (p *Proxy) extractAndStoreMemoriesFromAccumulator(
 		}
 	}
 
-	result, err := p.extractor.Extract(nil, assistantContent, userMessages)
+	result, err := p.extractor.Extract(context.Background(), assistantContent, userMessages)
 	if err != nil {
 		p.logger.Error("memory extraction failed", zap.Error(err))
 		return
 	}
 
 	if len(result.Memories) > 0 {
-		if err := p.extractor.Store(nil, namespace, result.Memories); err != nil {
+		if err := p.extractor.Store(context.Background(), namespace, result.Memories); err != nil {
 			p.logger.Error("memory storage failed", zap.Error(err))
 		} else {
 			p.logger.Debug("stored extracted memories",

@@ -4,6 +4,8 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -280,4 +282,190 @@ func (s *Server) securityHeadersMiddleware() gin.HandlerFunc {
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Next()
 	}
+}
+
+// AuthzConfig holds authorization configuration.
+type AuthzConfig struct {
+	// Enabled controls whether authorization is active.
+	Enabled bool
+	// DefaultPolicy is the default access policy: "allow" or "deny".
+	DefaultPolicy string
+	// APIKeyPermissions maps API keys to their allowed namespaces.
+	APIKeyPermissions map[string][]string
+}
+
+// authzMiddleware creates a namespace-level authorization middleware.
+// It checks if the authenticated API key has permission to access the namespace.
+func (s *Server) authzMiddleware(config AuthzConfig) gin.HandlerFunc {
+	// Pre-compute permission lookups
+	type permissions struct {
+		namespaces map[string]struct{}
+		allAccess  bool
+	}
+	keyPerms := make(map[string]permissions)
+
+	for key, namespaces := range config.APIKeyPermissions {
+		perms := permissions{
+			namespaces: make(map[string]struct{}),
+		}
+		for _, ns := range namespaces {
+			if ns == "*" {
+				perms.allAccess = true
+				break
+			}
+			perms.namespaces[ns] = struct{}{}
+		}
+		keyPerms[key] = perms
+	}
+
+	return func(c *gin.Context) {
+		// Skip if authorization is disabled
+		if !config.Enabled {
+			c.Next()
+			return
+		}
+
+		// Extract namespace from various sources
+		namespace := extractNamespace(c)
+		if namespace == "" {
+			// No namespace in request, allow (namespace-specific endpoints will validate later)
+			c.Next()
+			return
+		}
+
+		// Get API key from context (set by auth middleware)
+		apiKey := extractAPIKey(c)
+		if apiKey == "" {
+			// No API key means it passed auth (disabled or skipped path)
+			// Apply default policy
+			if config.DefaultPolicy == "deny" {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error":   "forbidden",
+					"message": "namespace access denied",
+				})
+				return
+			}
+			c.Next()
+			return
+		}
+
+		// Check permissions for this API key
+		perms, hasPerms := keyPerms[apiKey]
+		if !hasPerms {
+			// API key not in permissions map, apply default policy
+			if config.DefaultPolicy == "deny" {
+				s.logger.Warn("namespace access denied",
+					zap.String("namespace", namespace),
+					zap.String("client_ip", c.ClientIP()),
+				)
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"error":   "forbidden",
+					"message": "namespace access denied",
+				})
+				return
+			}
+			c.Next()
+			return
+		}
+
+		// Check if API key has access to this namespace
+		if perms.allAccess {
+			c.Next()
+			return
+		}
+
+		if _, allowed := perms.namespaces[namespace]; allowed {
+			c.Next()
+			return
+		}
+
+		// Check for hierarchical namespace access (e.g., "org1" grants access to "org1/project1")
+		for allowedNs := range perms.namespaces {
+			if strings.HasPrefix(namespace, allowedNs+"/") {
+				c.Next()
+				return
+			}
+		}
+
+		s.logger.Warn("namespace access denied",
+			zap.String("namespace", namespace),
+			zap.String("client_ip", c.ClientIP()),
+		)
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"error":   "forbidden",
+			"message": "access denied for namespace: " + namespace,
+		})
+	}
+}
+
+// extractNamespace extracts the namespace from the request.
+func extractNamespace(c *gin.Context) string {
+	// Try URL parameter (for /namespaces/:id routes)
+	if ns := c.Param("id"); ns != "" {
+		return ns
+	}
+
+	// Try X-MAIA-Namespace header
+	if ns := c.GetHeader("X-MAIA-Namespace"); ns != "" {
+		return ns
+	}
+
+	// Try query parameter
+	if ns := c.Query("namespace"); ns != "" {
+		return ns
+	}
+
+	// For POST/PUT requests, try to extract from JSON body
+	// We peek at the body and then restore it
+	if c.Request.Method == http.MethodPost || c.Request.Method == http.MethodPut {
+		if c.Request.Body != nil {
+			// Read body
+			bodyBytes, err := c.GetRawData()
+			if err == nil && len(bodyBytes) > 0 {
+				// Restore body for downstream handlers
+				c.Request.Body = &readCloser{data: bodyBytes}
+
+				// Try to extract namespace from JSON
+				var body map[string]interface{}
+				if err := json.Unmarshal(bodyBytes, &body); err == nil {
+					if ns, ok := body["namespace"].(string); ok {
+						return ns
+					}
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// readCloser is a helper to restore request body after reading.
+type readCloser struct {
+	data   []byte
+	offset int
+}
+
+func (r *readCloser) Read(p []byte) (n int, err error) {
+	if r.offset >= len(r.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, r.data[r.offset:])
+	r.offset += n
+	return n, nil
+}
+
+func (r *readCloser) Close() error {
+	return nil
+}
+
+// extractAPIKey extracts the API key from the request.
+func extractAPIKey(c *gin.Context) string {
+	apiKey := c.GetHeader("X-API-Key")
+	if apiKey == "" {
+		apiKey = strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	}
+	if apiKey == "" {
+		apiKey = c.Query("api_key")
+	}
+	return apiKey
 }

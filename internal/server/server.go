@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 
 	"github.com/ar4mirez/maia/internal/config"
@@ -91,6 +92,11 @@ func (s *Server) setupMiddleware() {
 	// Recovery middleware
 	s.router.Use(gin.Recovery())
 
+	// OpenTelemetry tracing middleware (if enabled)
+	if s.cfg.Tracing.Enabled {
+		s.router.Use(otelgin.Middleware(s.cfg.Tracing.ServiceName))
+	}
+
 	// Security headers middleware
 	s.router.Use(s.securityHeadersMiddleware())
 
@@ -119,6 +125,13 @@ func (s *Server) setupMiddleware() {
 			"/ready",
 			"/metrics",
 		},
+	}))
+
+	// Authorization middleware (namespace-level access control)
+	s.router.Use(s.authzMiddleware(AuthzConfig{
+		Enabled:           s.cfg.Security.Authorization.Enabled,
+		DefaultPolicy:     s.cfg.Security.Authorization.DefaultPolicy,
+		APIKeyPermissions: s.cfg.Security.Authorization.APIKeyPermissions,
 	}))
 
 	// Request timeout middleware
