@@ -749,3 +749,194 @@ func TestIsAlreadyExistsError(t *testing.T) {
 	assert.False(t, IsAlreadyExistsError(&APIError{StatusCode: 404}))
 	assert.False(t, IsAlreadyExistsError(nil))
 }
+
+func TestClient_UpdateNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPut, r.Method)
+		assert.Equal(t, "/v1/namespaces/ns-123", r.URL.Path)
+
+		var input UpdateNamespaceInput
+		err := json.NewDecoder(r.Body).Decode(&input)
+		require.NoError(t, err)
+		assert.Equal(t, 8000, input.Config.TokenBudget)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Namespace{
+			ID:   "ns-123",
+			Name: "test-namespace",
+			Config: NamespaceConfig{
+				TokenBudget: 8000,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	ns, err := client.UpdateNamespace(context.Background(), "ns-123", &UpdateNamespaceInput{
+		Config: NamespaceConfig{TokenBudget: 8000},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "ns-123", ns.ID)
+	assert.Equal(t, 8000, ns.Config.TokenBudget)
+}
+
+func TestClient_UpdateNamespace_EmptyID(t *testing.T) {
+	client := New()
+	_, err := client.UpdateNamespace(context.Background(), "", &UpdateNamespaceInput{Config: NamespaceConfig{TokenBudget: 5000}})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "id is required")
+}
+
+func TestClient_UpdateNamespace_NilInput(t *testing.T) {
+	client := New()
+	_, err := client.UpdateNamespace(context.Background(), "ns-123", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "input cannot be nil")
+}
+
+func TestClient_DeleteNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		assert.Equal(t, "/v1/namespaces/ns-123", r.URL.Path)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(DeleteResponse{Deleted: true})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	err := client.DeleteNamespace(context.Background(), "ns-123")
+
+	require.NoError(t, err)
+}
+
+func TestClient_DeleteNamespace_EmptyID(t *testing.T) {
+	client := New()
+	err := client.DeleteNamespace(context.Background(), "")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "id is required")
+}
+
+func TestClient_ListNamespaceMemories_WithPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Contains(t, r.URL.Path, "/v1/namespaces/test-ns/memories")
+		assert.Equal(t, "20", r.URL.Query().Get("limit"))
+		assert.Equal(t, "10", r.URL.Query().Get("offset"))
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ListResponse[*Memory]{
+			Data: []*Memory{
+				{ID: "mem-1", Content: "Memory 1"},
+				{ID: "mem-2", Content: "Memory 2"},
+			},
+			Count: 30,
+		})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	resp, err := client.ListNamespaceMemories(context.Background(), "test-ns", &ListOptions{
+		Limit:  20,
+		Offset: 10,
+	})
+
+	require.NoError(t, err)
+	assert.Len(t, resp.Data, 2)
+	assert.Equal(t, 30, resp.Count)
+}
+
+func TestClient_ListNamespaceMemories_EmptyNamespace(t *testing.T) {
+	client := New()
+	_, err := client.ListNamespaceMemories(context.Background(), "", nil)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "namespace is required")
+}
+
+func TestRecallOptions(t *testing.T) {
+	t.Run("WithSystemPrompt", func(t *testing.T) {
+		input := &GetContextInput{}
+		opt := WithSystemPrompt("You are a helpful assistant")
+		opt(input)
+		assert.Equal(t, "You are a helpful assistant", input.SystemPrompt)
+	})
+
+	t.Run("WithMinScore", func(t *testing.T) {
+		input := &GetContextInput{}
+		opt := WithMinScore(0.5)
+		opt(input)
+		assert.Equal(t, 0.5, input.MinScore)
+	})
+}
+
+func TestErrNotFound_Error(t *testing.T) {
+	err := &ErrNotFound{Resource: "memory", ID: "mem-123"}
+	assert.Equal(t, "memory not found: mem-123", err.Error())
+}
+
+func TestWithHeader_AppendsHeaders(t *testing.T) {
+	client := New(
+		WithHeader("X-Custom-1", "value1"),
+		WithHeader("X-Custom-2", "value2"),
+	)
+	assert.Equal(t, "value1", client.headers["X-Custom-1"])
+	assert.Equal(t, "value2", client.headers["X-Custom-2"])
+}
+
+func TestClient_Health_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(APIError{Message: "server error"})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	_, err := client.Health(context.Background())
+
+	assert.Error(t, err)
+}
+
+func TestClient_Stats_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(APIError{Message: "server error"})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	_, err := client.Stats(context.Background())
+
+	assert.Error(t, err)
+}
+
+func TestClient_SearchMemories_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(APIError{Message: "bad request"})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	_, err := client.SearchMemories(context.Background(), &SearchMemoriesInput{Query: "test"})
+
+	assert.Error(t, err)
+}
+
+func TestClient_GetNamespace_Error(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(APIError{StatusCode: 404, Code: "NOT_FOUND", Message: "namespace not found"})
+	}))
+	defer server.Close()
+
+	client := New(WithBaseURL(server.URL))
+	_, err := client.GetNamespace(context.Background(), "nonexistent")
+
+	assert.Error(t, err)
+	assert.True(t, IsNotFoundError(err))
+}

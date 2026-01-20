@@ -209,3 +209,71 @@ func TestTracerProvider_Shutdown_NilProvider(t *testing.T) {
 	err := tp.Shutdown(context.Background())
 	assert.NoError(t, err)
 }
+
+func TestInit_OTLPHTTPExporter_Secure(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.ExporterType = "otlp-http"
+	cfg.Endpoint = "localhost:4318"
+	cfg.Insecure = false // Secure connection
+
+	tp, err := Init(ctx, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tp)
+
+	// Should be able to shutdown without error
+	err = tp.Shutdown(ctx)
+	assert.NoError(t, err)
+}
+
+func TestInit_OTLPHTTPExporter_Insecure(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.ExporterType = "otlp-http"
+	cfg.Endpoint = "localhost:4318"
+	cfg.Insecure = true // Insecure connection
+
+	tp, err := Init(ctx, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tp)
+
+	// Should be able to shutdown without error
+	err = tp.Shutdown(ctx)
+	assert.NoError(t, err)
+}
+
+func TestInit_OTLPGRPCExporter_Secure(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.ExporterType = "otlp-grpc"
+	cfg.Endpoint = "localhost:4317"
+	cfg.Insecure = false // Secure connection
+
+	tp, err := Init(ctx, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tp)
+
+	// Should be able to shutdown without error
+	err = tp.Shutdown(ctx)
+	assert.NoError(t, err)
+}
+
+func TestInit_OTLPGRPCExporter_Insecure(t *testing.T) {
+	ctx := context.Background()
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.ExporterType = "otlp-grpc"
+	cfg.Endpoint = "localhost:4317"
+	cfg.Insecure = true // Insecure connection
+
+	tp, err := Init(ctx, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, tp)
+
+	// Should be able to shutdown without error
+	err = tp.Shutdown(ctx)
+	assert.NoError(t, err)
+}
