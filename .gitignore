@@ -1,5 +1,6 @@
 # Binaries
 /build/
+/bin/
 *.exe
 *.exe~
 *.dll
@@ -8,6 +9,11 @@
 /maia
 /maiactl
 /maia-mcp
+
+# Example binaries (compiled from examples/)
+/multi-agent
+/proxy-usage
+/basic-usage
 
 # Test binary, built with `go test -c`
 *.test
