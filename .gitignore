@@ -71,3 +71,6 @@ debug
 # Kubernetes secrets (if any)
 *-secret.yaml
 *-secrets.yaml
+
+# MkDocs
+/site/
