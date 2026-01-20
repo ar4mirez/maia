@@ -580,13 +580,48 @@ async with AsyncMAIAClient() as client:
 - Linter clean (golangci-lint run passes)
 - Graph index enables relationship-based memory retrieval
 
+### SESSION 15 (2026-01-19) - Retrieval Test Coverage Improvement
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+- [x] Added comprehensive tests for graph-related retrieval functions
+- [x] Added tests for NewRetrieverWithGraph constructor
+- [x] Added tests for SetGraphIndex method
+- [x] Added tests for graphSearch function (multiple scenarios)
+- [x] Added tests for calculateGraphScore function (direct, reverse, 2-hop, edge cases)
+- [x] Added tests for Retrieve with graph integration
+- [x] Added benchmark for graph-enabled retrieval
+- [x] Retrieval package coverage improved from 69.7% to 91.9%
+- [x] Overall coverage improved from 76.0% to 77.0%
+
+**Key Improvements**:
+
+| Package | Before | After | Target |
+|---------|--------|-------|--------|
+| internal/retrieval | 69.7% | 91.9% | 85% ✅ |
+| **Overall** | 76.0% | 77.0% | 70% ✅ |
+
+**Function Coverage Improvements**:
+
+| Function | Before | After |
+|----------|--------|-------|
+| NewRetrieverWithGraph | 0.0% | 100.0% |
+| SetGraphIndex | 0.0% | 100.0% |
+| graphSearch | 0.0% | 93.3% |
+| calculateGraphScore | 0.0% | 82.6% |
+
+**Notes**:
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- All coverage targets met
+
 ---
 
 ## Next Steps
 
 1. **Performance Testing** - Load testing under realistic conditions
 2. **Multi-tenancy** - Enhance for multi-tenant deployments
-3. **Retrieval Tests** - Improve retrieval package coverage to 85%
 
 ---
 

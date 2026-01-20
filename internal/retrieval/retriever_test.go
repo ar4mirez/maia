@@ -11,6 +11,7 @@ import (
 
 	"github.com/ar4mirez/maia/internal/embedding"
 	"github.com/ar4mirez/maia/internal/index/fulltext"
+	"github.com/ar4mirez/maia/internal/index/graph"
 	"github.com/ar4mirez/maia/internal/index/vector"
 	"github.com/ar4mirez/maia/internal/query"
 	"github.com/ar4mirez/maia/internal/storage"
@@ -652,6 +653,606 @@ func TestContainsAllTags(t *testing.T) {
 	}
 }
 
+// setupTestRetrieverWithGraph creates a retriever with graph index support
+func setupTestRetrieverWithGraph(t *testing.T) (*Retriever, *testStore, graph.Index, func()) {
+	// Create test store
+	ts := setupTestStore(t)
+
+	// Create mock embedder
+	embedder := embedding.NewMockProvider(128)
+
+	// Create vector index
+	vectorIndex := vector.NewBruteForceIndex(128)
+
+	// Create fulltext index (in-memory for testing)
+	fulltextIndex, err := fulltext.NewBleveIndex(fulltext.Config{InMemory: true})
+	require.NoError(t, err)
+
+	// Create graph index
+	graphIndex := graph.NewInMemoryIndex()
+
+	// Create retriever with graph
+	config := DefaultConfig()
+	retriever := NewRetrieverWithGraph(ts.Store, vectorIndex, fulltextIndex, graphIndex, embedder, config)
+
+	cleanup := func() {
+		ts.cleanup()
+		vectorIndex.Close()
+		fulltextIndex.Close()
+		graphIndex.Close()
+	}
+
+	return retriever, ts, graphIndex, cleanup
+}
+
+func TestNewRetrieverWithGraph(t *testing.T) {
+	retriever, _, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	assert.NotNil(t, retriever)
+	assert.NotNil(t, retriever.scorer)
+	assert.NotNil(t, retriever.graphIndex)
+	assert.Same(t, graphIndex, retriever.graphIndex)
+}
+
+func TestRetriever_SetGraphIndex(t *testing.T) {
+	retriever, _, cleanup := setupTestRetriever(t)
+	defer cleanup()
+
+	// Initially no graph index
+	assert.Nil(t, retriever.graphIndex)
+
+	// Set graph index
+	graphIndex := graph.NewInMemoryIndex()
+	defer graphIndex.Close()
+
+	retriever.SetGraphIndex(graphIndex)
+
+	assert.NotNil(t, retriever.graphIndex)
+	assert.Same(t, graphIndex, retriever.graphIndex)
+}
+
+func TestRetriever_Retrieve_WithGraphSearch(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories with relationships
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Machine learning fundamentals and basic concepts",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Deep learning neural networks advanced topics",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem3, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Natural language processing with transformers",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Index in vector index
+	for _, mem := range []*storage.Memory{mem1, mem2, mem3} {
+		emb, err := retriever.embedder.Embed(ctx, mem.Content)
+		require.NoError(t, err)
+		err = retriever.vectorIndex.Add(ctx, mem.ID, emb)
+		require.NoError(t, err)
+	}
+
+	// Create graph relationships: mem1 -> mem2 -> mem3
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem2.ID, mem3.ID, graph.RelationRelatedTo, 0.8)
+	require.NoError(t, err)
+
+	// Search with graph enabled and RelatedTo set
+	results, err := retriever.Retrieve(ctx, "machine learning", &RetrieveOptions{
+		Namespace:  "test",
+		Limit:      10,
+		UseVector:  true,
+		UseText:    false,
+		UseGraph:   true,
+		RelatedTo:  []string{mem1.ID},
+		GraphDepth: 2,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, results)
+	assert.Greater(t, len(results.Items), 0)
+
+	// Results should include graph-related memories
+	foundIDs := make(map[string]bool)
+	for _, item := range results.Items {
+		foundIDs[item.Memory.ID] = true
+	}
+
+	// mem2 should be found as it's directly related to mem1
+	assert.True(t, foundIDs[mem2.ID], "mem2 should be found as directly related")
+}
+
+func TestRetriever_Retrieve_GraphWithRelationFilter(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Project documentation main page",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "API reference documentation",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem3, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Tutorial for beginners",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Index in vector index
+	for _, mem := range []*storage.Memory{mem1, mem2, mem3} {
+		emb, err := retriever.embedder.Embed(ctx, mem.Content)
+		require.NoError(t, err)
+		err = retriever.vectorIndex.Add(ctx, mem.ID, emb)
+		require.NoError(t, err)
+	}
+
+	// Create different relationship types
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationReferences, 0.9)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem3.ID, graph.RelationContains, 0.7)
+	require.NoError(t, err)
+
+	// Search with specific relation filter
+	results, err := retriever.Retrieve(ctx, "documentation", &RetrieveOptions{
+		Namespace:      "test",
+		Limit:          10,
+		UseVector:      true,
+		UseText:        false,
+		UseGraph:       true,
+		RelatedTo:      []string{mem1.ID},
+		GraphRelations: []string{graph.RelationReferences},
+		GraphDepth:     1,
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, results)
+}
+
+func TestRetriever_graphSearch(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Related memory 1",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem3, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Related memory 2",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Create graph relationships
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem3.ID, graph.RelationRelatedTo, 0.8)
+	require.NoError(t, err)
+
+	// Test graphSearch directly
+	opts := &RetrieveOptions{
+		RelatedTo:  []string{mem1.ID},
+		GraphDepth: 2,
+		Limit:      10,
+	}
+
+	scores, err := retriever.graphSearch(ctx, opts)
+	require.NoError(t, err)
+	assert.Len(t, scores, 2)
+
+	// Check that mem2 has higher score (higher weight)
+	assert.Greater(t, scores[mem2.ID], scores[mem3.ID])
+}
+
+func TestRetriever_graphSearch_DefaultDepth(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Related memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Create graph relationship
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+
+	// Test with GraphDepth = 0 (should default to 2)
+	opts := &RetrieveOptions{
+		RelatedTo:  []string{mem1.ID},
+		GraphDepth: 0,
+		Limit:      10,
+	}
+
+	scores, err := retriever.graphSearch(ctx, opts)
+	require.NoError(t, err)
+	assert.Greater(t, len(scores), 0)
+}
+
+func TestRetriever_graphSearch_MultipleRelatedTo(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory 1",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory 2",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem3, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Related to both",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem4, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Related to mem1 only",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Create graph relationships
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem3.ID, graph.RelationRelatedTo, 0.8)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem2.ID, mem3.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem4.ID, graph.RelationRelatedTo, 0.7)
+	require.NoError(t, err)
+
+	// Test with multiple RelatedTo
+	opts := &RetrieveOptions{
+		RelatedTo:  []string{mem1.ID, mem2.ID},
+		GraphDepth: 1,
+		Limit:      10,
+	}
+
+	scores, err := retriever.graphSearch(ctx, opts)
+	require.NoError(t, err)
+
+	// mem3 should have the highest score (related to both sources)
+	// The highest score from either path should be kept
+	assert.Contains(t, scores, mem3.ID)
+	assert.Contains(t, scores, mem4.ID)
+}
+
+func TestRetriever_calculateGraphScore(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Directly connected",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem3, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Intermediate memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem4, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Two hops away",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Create edges: mem1 -> mem2 (direct), mem1 -> mem3 -> mem4 (2-hop)
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem3.ID, graph.RelationRelatedTo, 0.8)
+	require.NoError(t, err)
+	err = graphIndex.AddEdge(ctx, mem3.ID, mem4.ID, graph.RelationRelatedTo, 0.7)
+	require.NoError(t, err)
+
+	relatedTo := []string{mem1.ID}
+
+	// Direct connection should return 1.0
+	score := retriever.calculateGraphScore(ctx, mem2.ID, relatedTo)
+	assert.Equal(t, 1.0, score, "direct connection should return 1.0")
+
+	// 2-hop connection should return reduced score
+	score = retriever.calculateGraphScore(ctx, mem4.ID, relatedTo)
+	assert.Less(t, score, 1.0, "2-hop should have lower score")
+	assert.Greater(t, score, 0.0, "2-hop should still have some score")
+}
+
+func TestRetriever_calculateGraphScore_ReverseEdge(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Points to source",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Create reverse edge: mem2 -> mem1
+	err = graphIndex.AddEdge(ctx, mem2.ID, mem1.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+
+	relatedTo := []string{mem1.ID}
+
+	// Should still find the connection in reverse
+	score := retriever.calculateGraphScore(ctx, mem2.ID, relatedTo)
+	assert.Equal(t, 1.0, score, "reverse edge should return 1.0")
+}
+
+func TestRetriever_calculateGraphScore_NoGraphIndex(t *testing.T) {
+	retriever, _, cleanup := setupTestRetriever(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Without graph index, should return 0
+	score := retriever.calculateGraphScore(ctx, "some-id", []string{"other-id"})
+	assert.Equal(t, 0.0, score, "no graph index should return 0")
+}
+
+func TestRetriever_calculateGraphScore_EmptyRelatedTo(t *testing.T) {
+	retriever, _, _, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Empty relatedTo should return 0
+	score := retriever.calculateGraphScore(ctx, "some-id", []string{})
+	assert.Equal(t, 0.0, score, "empty relatedTo should return 0")
+}
+
+func TestRetriever_calculateGraphScore_NoConnection(t *testing.T) {
+	retriever, ts, _, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories without any connection
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Isolated memory 1",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Isolated memory 2",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// No edges between them
+	score := retriever.calculateGraphScore(ctx, mem2.ID, []string{mem1.ID})
+	assert.Equal(t, 0.0, score, "no connection should return 0")
+}
+
+func TestRetriever_Retrieve_GraphScoreInResults(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory for graph test",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Directly related memory for graph test",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Index in vector index
+	for _, mem := range []*storage.Memory{mem1, mem2} {
+		emb, err := retriever.embedder.Embed(ctx, mem.Content)
+		require.NoError(t, err)
+		err = retriever.vectorIndex.Add(ctx, mem.ID, emb)
+		require.NoError(t, err)
+	}
+
+	// Create graph relationship
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+
+	// Search with graph
+	results, err := retriever.Retrieve(ctx, "memory for graph test", &RetrieveOptions{
+		Namespace: "test",
+		Limit:     10,
+		UseVector: true,
+		UseText:   false,
+		UseGraph:  true,
+		RelatedTo: []string{mem1.ID},
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, results)
+
+	// Find mem2 in results and check its graph score
+	for _, item := range results.Items {
+		if item.Memory.ID == mem2.ID {
+			// GraphScore should be non-zero because it's directly related
+			assert.Greater(t, item.GraphScore, 0.0, "related memory should have positive graph score")
+		}
+	}
+}
+
+func TestRetriever_Retrieve_GraphDisabled(t *testing.T) {
+	retriever, ts, graphIndex, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memories
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Source memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	mem2, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Related memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Index in vector index
+	for _, mem := range []*storage.Memory{mem1, mem2} {
+		emb, err := retriever.embedder.Embed(ctx, mem.Content)
+		require.NoError(t, err)
+		err = retriever.vectorIndex.Add(ctx, mem.ID, emb)
+		require.NoError(t, err)
+	}
+
+	// Create graph relationship
+	err = graphIndex.AddEdge(ctx, mem1.ID, mem2.ID, graph.RelationRelatedTo, 0.9)
+	require.NoError(t, err)
+
+	// Search with graph disabled
+	results, err := retriever.Retrieve(ctx, "memory", &RetrieveOptions{
+		Namespace: "test",
+		Limit:     10,
+		UseVector: true,
+		UseText:   false,
+		UseGraph:  false, // Explicitly disabled
+		RelatedTo: []string{mem1.ID},
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, results)
+}
+
+func TestRetriever_Retrieve_GraphWithNoRelatedTo(t *testing.T) {
+	retriever, ts, _, cleanup := setupTestRetrieverWithGraph(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memory
+	mem1, err := ts.Store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Test memory content",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Index
+	emb, err := retriever.embedder.Embed(ctx, mem1.Content)
+	require.NoError(t, err)
+	err = retriever.vectorIndex.Add(ctx, mem1.ID, emb)
+	require.NoError(t, err)
+
+	// Search with graph enabled but no RelatedTo - should not trigger graphSearch
+	results, err := retriever.Retrieve(ctx, "test memory", &RetrieveOptions{
+		Namespace: "test",
+		Limit:     10,
+		UseVector: true,
+		UseText:   false,
+		UseGraph:  true,
+		RelatedTo: nil, // No RelatedTo
+	})
+
+	require.NoError(t, err)
+	assert.NotNil(t, results)
+}
+
 func BenchmarkRetriever_Retrieve(b *testing.B) {
 	// Create test store
 	dir, err := os.MkdirTemp("", "maia-retrieval-bench-*")
@@ -688,6 +1289,63 @@ func BenchmarkRetriever_Retrieve(b *testing.B) {
 		Limit:     10,
 		UseVector: true,
 		UseText:   false,
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = retriever.Retrieve(ctx, "test memory", opts)
+	}
+}
+
+func BenchmarkRetriever_Retrieve_WithGraph(b *testing.B) {
+	// Create test store
+	dir, err := os.MkdirTemp("", "maia-retrieval-bench-graph-*")
+	require.NoError(b, err)
+	defer os.RemoveAll(dir)
+
+	store, err := badger.NewWithPath(dir)
+	require.NoError(b, err)
+	defer store.Close()
+
+	// Create mock embedder
+	embedder := embedding.NewMockProvider(128)
+
+	// Create vector index
+	vectorIndex := vector.NewBruteForceIndex(128)
+	defer vectorIndex.Close()
+
+	// Create graph index
+	graphIndex := graph.NewInMemoryIndex()
+	defer graphIndex.Close()
+
+	ctx := context.Background()
+
+	// Create and index 100 memories with graph relationships
+	var memIDs []string
+	for i := 0; i < 100; i++ {
+		mem, _ := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+			Namespace: "test",
+			Content:   "Benchmark test memory content for retrieval performance testing",
+			Type:      storage.MemoryTypeSemantic,
+		})
+		memIDs = append(memIDs, mem.ID)
+		emb, _ := embedder.Embed(ctx, mem.Content)
+		_ = vectorIndex.Add(ctx, mem.ID, emb)
+
+		// Create some graph edges
+		if i > 0 {
+			_ = graphIndex.AddEdge(ctx, memIDs[i-1], mem.ID, graph.RelationRelatedTo, 0.8)
+		}
+	}
+
+	retriever := NewRetrieverWithGraph(store, vectorIndex, nil, graphIndex, embedder, DefaultConfig())
+	opts := &RetrieveOptions{
+		Namespace: "test",
+		Limit:     10,
+		UseVector: true,
+		UseText:   false,
+		UseGraph:  true,
+		RelatedTo: []string{memIDs[0]},
 	}
 
 	b.ResetTimer()
