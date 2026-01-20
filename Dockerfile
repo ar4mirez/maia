@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.25-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -19,20 +19,27 @@ ARG VERSION=dev
 ARG COMMIT=unknown
 ARG BUILD_TIME=unknown
 
-# Build the main binary
+# Build all binaries with version info
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-w -s -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILD_TIME}" \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME} \
+    -X github.com/ar4mirez/maia/internal/version.Version=${VERSION} \
+    -X github.com/ar4mirez/maia/internal/version.Commit=${COMMIT} \
+    -X github.com/ar4mirez/maia/internal/version.BuildTime=${BUILD_TIME}" \
     -o /build/maia ./cmd/maia
 
-# Build the CLI binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-w -s -X github.com/ar4mirez/maia/cmd/maiactl/cmd.version=${VERSION} -X github.com/ar4mirez/maia/cmd/maiactl/cmd.commit=${COMMIT}" \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME} \
+    -X github.com/ar4mirez/maia/internal/version.Version=${VERSION} \
+    -X github.com/ar4mirez/maia/internal/version.Commit=${COMMIT} \
+    -X github.com/ar4mirez/maia/internal/version.BuildTime=${BUILD_TIME}" \
     -o /build/maiactl ./cmd/maiactl
 
-# Build the MCP server binary
 RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-w -s" \
-    -o /build/mcp-server ./cmd/mcp-server
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildTime=${BUILD_TIME} \
+    -X github.com/ar4mirez/maia/internal/version.Version=${VERSION} \
+    -X github.com/ar4mirez/maia/internal/version.Commit=${COMMIT} \
+    -X github.com/ar4mirez/maia/internal/version.BuildTime=${BUILD_TIME}" \
+    -o /build/maia-mcp ./cmd/mcp-server
 
 # Final stage - minimal runtime image
 FROM alpine:3.19
@@ -51,7 +58,7 @@ RUN mkdir -p /data /config && \
 # Copy binaries from builder
 COPY --from=builder /build/maia /usr/local/bin/maia
 COPY --from=builder /build/maiactl /usr/local/bin/maiactl
-COPY --from=builder /build/mcp-server /usr/local/bin/mcp-server
+COPY --from=builder /build/maia-mcp /usr/local/bin/maia-mcp
 
 # Set environment variables
 ENV MAIA_STORAGE_DATA_DIR=/data \
