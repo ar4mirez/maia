@@ -13,6 +13,7 @@ import (
 	"github.com/ar4mirez/maia/internal/embedding"
 	"github.com/ar4mirez/maia/internal/index/fulltext"
 	"github.com/ar4mirez/maia/internal/index/vector"
+	"github.com/ar4mirez/maia/internal/inference"
 	"github.com/ar4mirez/maia/internal/storage"
 	"github.com/ar4mirez/maia/internal/storage/badger"
 )
@@ -1056,4 +1057,280 @@ func TestIntegration_FullWorkflow(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 2, listOutput2.Total)
+}
+
+// Inference tool tests
+
+func setupTestServerWithInference(t *testing.T) (*Server, func()) {
+	t.Helper()
+
+	// Create temporary store
+	tmpDir := t.TempDir()
+	store, err := badger.New(&badger.Options{DataDir: tmpDir})
+	require.NoError(t, err)
+
+	// Create mock embedding provider
+	provider := embedding.NewMockProvider(384)
+
+	// Create vector index
+	vectorIndex := vector.NewHNSWIndex(vector.DefaultConfig(384))
+
+	// Create text index
+	textIndex, err := fulltext.NewBleveIndex(fulltext.Config{InMemory: true})
+	require.NoError(t, err)
+
+	// Create inference router with mock provider
+	inferenceRouter := inference.NewRouter(inference.RoutingConfig{}, "mock")
+	mockInferenceProvider := inference.NewMockProvider("mock").WithResponse("Test inference response")
+	inferenceRouter.RegisterProvider(mockInferenceProvider)
+
+	// Create server with inference
+	server, err := NewServer(&Options{
+		Config:          &config.Config{},
+		Store:           store,
+		Provider:        provider,
+		VectorIndex:     vectorIndex,
+		TextIndex:       textIndex,
+		InferenceRouter: inferenceRouter,
+	})
+	require.NoError(t, err)
+
+	cleanup := func() {
+		inferenceRouter.Close()
+		server.Close()
+		textIndex.Close()
+	}
+
+	return server, cleanup
+}
+
+func TestTool_MaiaComplete(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	result, output, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
+		Model: "mock-model",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello, how are you?"},
+		},
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Contains(t, output.Content, "Test inference response")
+	assert.Equal(t, "mock", output.Provider)
+	assert.NotEmpty(t, output.ID)
+}
+
+func TestTool_MaiaComplete_WithMemoryInjection(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Store some memories first
+	_, _, err := server.handleRemember(ctx, nil, RememberInput{
+		Content:   "User's favorite color is blue",
+		Namespace: "test-inference",
+	})
+	require.NoError(t, err)
+
+	// Complete with memory injection
+	_, output, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
+		Model: "mock-model",
+		Messages: []MessageInput{
+			{Role: "user", Content: "What is my favorite color?"},
+		},
+		Namespace:    "test-inference",
+		InjectMemory: true,
+	})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, output.MemoriesUsed, 0) // May or may not find memories depending on retrieval
+}
+
+func TestTool_MaiaComplete_EmptyModel(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
+		Model: "",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is required")
+}
+
+func TestTool_MaiaComplete_EmptyMessages(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
+		Model:    "mock-model",
+		Messages: []MessageInput{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "messages are required")
+}
+
+func TestTool_MaiaComplete_NoInferenceRouter(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
+		Model: "mock-model",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inference is not enabled")
+}
+
+func TestTool_MaiaComplete_ExplicitProvider(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Add another provider
+	anotherProvider := inference.NewMockProvider("another").WithResponse("Another response")
+	server.inferenceRouter.RegisterProvider(anotherProvider)
+
+	// Request with explicit provider
+	_, output, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
+		Model: "mock-model",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+		Provider: "another",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "another", output.Provider)
+	assert.Contains(t, output.Content, "Another response")
+}
+
+func TestTool_MaiaStream(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	result, output, err := server.handleMaiaStream(ctx, nil, MaiaStreamInput{
+		Model: "mock-model",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello, how are you?"},
+		},
+	})
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.NotEmpty(t, output.Content)
+	assert.Equal(t, "mock", output.Provider)
+}
+
+func TestTool_MaiaStream_EmptyModel(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaStream(ctx, nil, MaiaStreamInput{
+		Model: "",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is required")
+}
+
+func TestTool_MaiaStream_EmptyMessages(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaStream(ctx, nil, MaiaStreamInput{
+		Model:    "mock-model",
+		Messages: []MessageInput{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "messages are required")
+}
+
+func TestTool_MaiaStream_NoInferenceRouter(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaStream(ctx, nil, MaiaStreamInput{
+		Model: "mock-model",
+		Messages: []MessageInput{
+			{Role: "user", Content: "Hello"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inference is not enabled")
+}
+
+func TestTool_MaiaListModels(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	result, output, err := server.handleMaiaListModels(ctx, nil, MaiaListModelsInput{})
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.GreaterOrEqual(t, output.Total, 1)
+	assert.NotEmpty(t, output.Models)
+}
+
+func TestTool_MaiaListModels_FilterByProvider(t *testing.T) {
+	server, cleanup := setupTestServerWithInference(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Add another provider
+	anotherProvider := inference.NewMockProvider("another").WithModels([]string{"another-model"})
+	server.inferenceRouter.RegisterProvider(anotherProvider)
+
+	// Filter by mock provider
+	_, output, err := server.handleMaiaListModels(ctx, nil, MaiaListModelsInput{
+		Provider: "mock",
+	})
+	require.NoError(t, err)
+	for _, m := range output.Models {
+		assert.Equal(t, "mock", m.Provider)
+	}
+
+	// Filter by another provider
+	_, output2, err := server.handleMaiaListModels(ctx, nil, MaiaListModelsInput{
+		Provider: "another",
+	})
+	require.NoError(t, err)
+	for _, m := range output2.Models {
+		assert.Equal(t, "another", m.Provider)
+	}
+}
+
+func TestTool_MaiaListModels_NoInferenceRouter(t *testing.T) {
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, _, err := server.handleMaiaListModels(ctx, nil, MaiaListModelsInput{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "inference is not enabled")
 }

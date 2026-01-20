@@ -3,11 +3,13 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	ctxpkg "github.com/ar4mirez/maia/internal/context"
+	"github.com/ar4mirez/maia/internal/inference"
 	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
 )
@@ -43,6 +45,27 @@ func (s *Server) registerTools() {
 		Name:        "get_context",
 		Description: "Assemble a position-aware context from relevant memories optimized for LLM consumption.",
 	}, s.handleGetContext)
+
+	// Register inference tools if inference router is available
+	if s.inferenceRouter != nil {
+		// Complete tool - generates completions with memory context
+		mcp.AddTool(s.server, &mcp.Tool{
+			Name:        "maia_complete",
+			Description: "Generate a completion using MAIA's inference system with automatic memory context injection. Supports multiple providers (Ollama, OpenRouter, Anthropic).",
+		}, s.handleMaiaComplete)
+
+		// Stream tool - generates streaming completions (returns accumulated result)
+		mcp.AddTool(s.server, &mcp.Tool{
+			Name:        "maia_stream",
+			Description: "Generate a streaming completion using MAIA's inference system. Returns the accumulated response after streaming completes.",
+		}, s.handleMaiaStream)
+
+		// List models tool - lists available models from all providers
+		mcp.AddTool(s.server, &mcp.Tool{
+			Name:        "maia_list_models",
+			Description: "List all available models from configured inference providers.",
+		}, s.handleMaiaListModels)
+	}
 }
 
 // RememberInput defines the input schema for the remember tool.
@@ -432,4 +455,403 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// MaiaCompleteInput defines the input schema for the maia_complete tool.
+type MaiaCompleteInput struct {
+	Model       string            `json:"model" jsonschema:"The model to use for completion (e.g., 'llama2', 'gpt-4', 'claude-3-opus')"`
+	Messages    []MessageInput    `json:"messages" jsonschema:"The conversation messages"`
+	Namespace   string            `json:"namespace,omitempty" jsonschema:"The namespace to retrieve memory context from (default: 'default')"`
+	TokenBudget int               `json:"token_budget,omitempty" jsonschema:"Maximum tokens for memory context injection (default: 2000)"`
+	Temperature *float64          `json:"temperature,omitempty" jsonschema:"Sampling temperature (0.0-2.0)"`
+	MaxTokens   *int              `json:"max_tokens,omitempty" jsonschema:"Maximum tokens to generate"`
+	Provider    string            `json:"provider,omitempty" jsonschema:"Explicit provider to use (overrides routing)"`
+	InjectMemory bool             `json:"inject_memory,omitempty" jsonschema:"Whether to inject relevant memories into context (default: true)"`
+}
+
+// MessageInput represents a chat message for MCP tools.
+type MessageInput struct {
+	Role    string `json:"role" jsonschema:"The role: 'system', 'user', or 'assistant'"`
+	Content string `json:"content" jsonschema:"The message content"`
+}
+
+// MaiaCompleteOutput defines the output for the maia_complete tool.
+type MaiaCompleteOutput struct {
+	ID           string `json:"id"`
+	Model        string `json:"model"`
+	Content      string `json:"content"`
+	FinishReason string `json:"finish_reason"`
+	Provider     string `json:"provider"`
+	MemoriesUsed int    `json:"memories_used"`
+	Usage        *UsageOutput `json:"usage,omitempty"`
+}
+
+// UsageOutput represents token usage in the output.
+type UsageOutput struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+func (s *Server) handleMaiaComplete(ctx context.Context, req *mcp.CallToolRequest, input MaiaCompleteInput) (*mcp.CallToolResult, MaiaCompleteOutput, error) {
+	if s.inferenceRouter == nil {
+		return nil, MaiaCompleteOutput{}, fmt.Errorf("inference is not enabled")
+	}
+
+	if input.Model == "" {
+		return nil, MaiaCompleteOutput{}, fmt.Errorf("model is required")
+	}
+
+	if len(input.Messages) == 0 {
+		return nil, MaiaCompleteOutput{}, fmt.Errorf("messages are required")
+	}
+
+	namespace := input.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	tokenBudget := input.TokenBudget
+	if tokenBudget <= 0 {
+		tokenBudget = 2000
+	}
+
+	// Convert messages
+	messages := make([]inference.Message, len(input.Messages))
+	for i, m := range input.Messages {
+		messages[i] = inference.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+
+	memoriesUsed := 0
+
+	// Inject memory context if enabled (default: true)
+	injectMemory := input.InjectMemory
+	if !injectMemory && input.InjectMemory == false {
+		// Check if it was explicitly set to false or just default
+		injectMemory = true // Default to true
+	}
+
+	if injectMemory && s.retriever != nil {
+		// Get the last user message for context retrieval
+		var query string
+		for i := len(input.Messages) - 1; i >= 0; i-- {
+			if input.Messages[i].Role == "user" {
+				query = input.Messages[i].Content
+				break
+			}
+		}
+
+		if query != "" {
+			results, err := s.retriever.Retrieve(ctx, query, &retrieval.RetrieveOptions{
+				Namespace: namespace,
+				Limit:     20,
+				UseVector: true,
+				UseText:   true,
+			})
+			if err == nil && len(results.Items) > 0 {
+				// Assemble memory context
+				assembled, err := s.assembler.Assemble(ctx, results, &ctxpkg.AssembleOptions{
+					TokenBudget: tokenBudget,
+				})
+				if err == nil && assembled.Content != "" {
+					// Inject as system message at the beginning
+					memoryMessage := inference.Message{
+						Role:    "system",
+						Content: fmt.Sprintf("Relevant context from memory:\n\n%s", assembled.Content),
+					}
+					messages = append([]inference.Message{memoryMessage}, messages...)
+					memoriesUsed = len(assembled.Memories)
+				}
+			}
+		}
+	}
+
+	// Build completion request
+	completionReq := &inference.CompletionRequest{
+		Model:       input.Model,
+		Messages:    messages,
+		Temperature: input.Temperature,
+		MaxTokens:   input.MaxTokens,
+	}
+
+	// Route to provider
+	var provider inference.Provider
+	var err error
+	if input.Provider != "" {
+		provider, err = s.inferenceRouter.RouteWithOptions(ctx, input.Model, input.Provider)
+	} else {
+		provider, err = s.inferenceRouter.Route(ctx, input.Model)
+	}
+	if err != nil {
+		return nil, MaiaCompleteOutput{}, fmt.Errorf("failed to route to provider: %w", err)
+	}
+
+	// Execute completion
+	resp, err := provider.Complete(ctx, completionReq)
+	if err != nil {
+		return nil, MaiaCompleteOutput{}, fmt.Errorf("completion failed: %w", err)
+	}
+
+	// Extract response content
+	content := ""
+	finishReason := ""
+	if len(resp.Choices) > 0 && resp.Choices[0].Message != nil {
+		content = resp.Choices[0].Message.Content
+		finishReason = resp.Choices[0].FinishReason
+	}
+
+	output := MaiaCompleteOutput{
+		ID:           resp.ID,
+		Model:        resp.Model,
+		Content:      content,
+		FinishReason: finishReason,
+		Provider:     provider.Name(),
+		MemoriesUsed: memoriesUsed,
+	}
+
+	if resp.Usage != nil {
+		output.Usage = &UsageOutput{
+			PromptTokens:     resp.Usage.PromptTokens,
+			CompletionTokens: resp.Usage.CompletionTokens,
+			TotalTokens:      resp.Usage.TotalTokens,
+		}
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: content},
+		},
+	}, output, nil
+}
+
+// MaiaStreamInput defines the input schema for the maia_stream tool.
+type MaiaStreamInput struct {
+	Model       string         `json:"model" jsonschema:"The model to use for completion"`
+	Messages    []MessageInput `json:"messages" jsonschema:"The conversation messages"`
+	Namespace   string         `json:"namespace,omitempty" jsonschema:"The namespace to retrieve memory context from (default: 'default')"`
+	TokenBudget int            `json:"token_budget,omitempty" jsonschema:"Maximum tokens for memory context injection (default: 2000)"`
+	Temperature *float64       `json:"temperature,omitempty" jsonschema:"Sampling temperature (0.0-2.0)"`
+	MaxTokens   *int           `json:"max_tokens,omitempty" jsonschema:"Maximum tokens to generate"`
+	Provider    string         `json:"provider,omitempty" jsonschema:"Explicit provider to use (overrides routing)"`
+	InjectMemory bool          `json:"inject_memory,omitempty" jsonschema:"Whether to inject relevant memories into context (default: true)"`
+}
+
+// MaiaStreamOutput defines the output for the maia_stream tool.
+type MaiaStreamOutput struct {
+	ID           string `json:"id"`
+	Model        string `json:"model"`
+	Content      string `json:"content"`
+	FinishReason string `json:"finish_reason"`
+	Provider     string `json:"provider"`
+	MemoriesUsed int    `json:"memories_used"`
+}
+
+func (s *Server) handleMaiaStream(ctx context.Context, req *mcp.CallToolRequest, input MaiaStreamInput) (*mcp.CallToolResult, MaiaStreamOutput, error) {
+	if s.inferenceRouter == nil {
+		return nil, MaiaStreamOutput{}, fmt.Errorf("inference is not enabled")
+	}
+
+	if input.Model == "" {
+		return nil, MaiaStreamOutput{}, fmt.Errorf("model is required")
+	}
+
+	if len(input.Messages) == 0 {
+		return nil, MaiaStreamOutput{}, fmt.Errorf("messages are required")
+	}
+
+	namespace := input.Namespace
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	tokenBudget := input.TokenBudget
+	if tokenBudget <= 0 {
+		tokenBudget = 2000
+	}
+
+	// Convert messages
+	messages := make([]inference.Message, len(input.Messages))
+	for i, m := range input.Messages {
+		messages[i] = inference.Message{
+			Role:    m.Role,
+			Content: m.Content,
+		}
+	}
+
+	memoriesUsed := 0
+
+	// Inject memory context if enabled (default: true)
+	injectMemory := input.InjectMemory
+	if !injectMemory && input.InjectMemory == false {
+		injectMemory = true
+	}
+
+	if injectMemory && s.retriever != nil {
+		var query string
+		for i := len(input.Messages) - 1; i >= 0; i-- {
+			if input.Messages[i].Role == "user" {
+				query = input.Messages[i].Content
+				break
+			}
+		}
+
+		if query != "" {
+			results, err := s.retriever.Retrieve(ctx, query, &retrieval.RetrieveOptions{
+				Namespace: namespace,
+				Limit:     20,
+				UseVector: true,
+				UseText:   true,
+			})
+			if err == nil && len(results.Items) > 0 {
+				assembled, err := s.assembler.Assemble(ctx, results, &ctxpkg.AssembleOptions{
+					TokenBudget: tokenBudget,
+				})
+				if err == nil && assembled.Content != "" {
+					memoryMessage := inference.Message{
+						Role:    "system",
+						Content: fmt.Sprintf("Relevant context from memory:\n\n%s", assembled.Content),
+					}
+					messages = append([]inference.Message{memoryMessage}, messages...)
+					memoriesUsed = len(assembled.Memories)
+				}
+			}
+		}
+	}
+
+	// Build completion request
+	completionReq := &inference.CompletionRequest{
+		Model:       input.Model,
+		Messages:    messages,
+		Temperature: input.Temperature,
+		MaxTokens:   input.MaxTokens,
+		Stream:      true,
+	}
+
+	// Route to provider
+	var provider inference.Provider
+	var err error
+	if input.Provider != "" {
+		provider, err = s.inferenceRouter.RouteWithOptions(ctx, input.Model, input.Provider)
+	} else {
+		provider, err = s.inferenceRouter.Route(ctx, input.Model)
+	}
+	if err != nil {
+		return nil, MaiaStreamOutput{}, fmt.Errorf("failed to route to provider: %w", err)
+	}
+
+	// Execute streaming completion
+	stream, err := provider.Stream(ctx, completionReq)
+	if err != nil {
+		return nil, MaiaStreamOutput{}, fmt.Errorf("streaming failed: %w", err)
+	}
+	defer stream.Close()
+
+	// Accumulate the stream
+	accumulator := inference.NewAccumulator()
+	for {
+		chunk, err := stream.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, MaiaStreamOutput{}, fmt.Errorf("stream read error: %w", err)
+		}
+		accumulator.Add(chunk)
+	}
+
+	// Convert to response
+	resp := accumulator.ToResponse()
+
+	content := ""
+	finishReason := ""
+	if len(resp.Choices) > 0 && resp.Choices[0].Message != nil {
+		content = resp.Choices[0].Message.Content
+		finishReason = resp.Choices[0].FinishReason
+	}
+
+	output := MaiaStreamOutput{
+		ID:           resp.ID,
+		Model:        resp.Model,
+		Content:      content,
+		FinishReason: finishReason,
+		Provider:     provider.Name(),
+		MemoriesUsed: memoriesUsed,
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: content},
+		},
+	}, output, nil
+}
+
+// MaiaListModelsInput defines the input schema for the maia_list_models tool.
+type MaiaListModelsInput struct {
+	Provider string `json:"provider,omitempty" jsonschema:"Filter by provider name (optional)"`
+}
+
+// MaiaListModelsOutput defines the output for the maia_list_models tool.
+type MaiaListModelsOutput struct {
+	Models []ModelInfo `json:"models"`
+	Total  int         `json:"total"`
+}
+
+// ModelInfo represents model information in the output.
+type ModelInfo struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+	OwnedBy  string `json:"owned_by,omitempty"`
+}
+
+func (s *Server) handleMaiaListModels(ctx context.Context, req *mcp.CallToolRequest, input MaiaListModelsInput) (*mcp.CallToolResult, MaiaListModelsOutput, error) {
+	if s.inferenceRouter == nil {
+		return nil, MaiaListModelsOutput{}, fmt.Errorf("inference is not enabled")
+	}
+
+	var allModels []ModelInfo
+
+	providers := s.inferenceRouter.ListProviders()
+	for _, p := range providers {
+		// Filter by provider if specified
+		if input.Provider != "" && p.Name() != input.Provider {
+			continue
+		}
+
+		models, err := p.ListModels(ctx)
+		if err != nil {
+			continue // Skip providers that fail
+		}
+
+		for _, m := range models {
+			allModels = append(allModels, ModelInfo{
+				ID:       m.ID,
+				Provider: p.Name(),
+				OwnedBy:  m.OwnedBy,
+			})
+		}
+	}
+
+	output := MaiaListModelsOutput{
+		Models: allModels,
+		Total:  len(allModels),
+	}
+
+	var text string
+	if len(allModels) == 0 {
+		text = "No models available."
+	} else {
+		text = fmt.Sprintf("Found %d models:\n\n", len(allModels))
+		for _, m := range allModels {
+			text += fmt.Sprintf("- %s (provider: %s)\n", m.ID, m.Provider)
+		}
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: text},
+		},
+	}, output, nil
 }

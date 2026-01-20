@@ -13,6 +13,7 @@ import (
 	"github.com/ar4mirez/maia/internal/embedding"
 	"github.com/ar4mirez/maia/internal/index/fulltext"
 	"github.com/ar4mirez/maia/internal/index/vector"
+	"github.com/ar4mirez/maia/internal/inference"
 	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
 	"github.com/ar4mirez/maia/internal/storage/badger"
@@ -20,21 +21,23 @@ import (
 
 // Server wraps the MCP server with MAIA-specific functionality.
 type Server struct {
-	server    *mcp.Server
-	store     storage.Store
-	retriever *retrieval.Retriever
-	assembler *ctxpkg.Assembler
-	provider  embedding.Provider
-	cfg       *config.Config
+	server          *mcp.Server
+	store           storage.Store
+	retriever       *retrieval.Retriever
+	assembler       *ctxpkg.Assembler
+	provider        embedding.Provider
+	cfg             *config.Config
+	inferenceRouter *inference.DefaultRouter
 }
 
 // Options configures the MCP server.
 type Options struct {
-	Config      *config.Config
-	Store       storage.Store
-	Provider    embedding.Provider
-	VectorIndex vector.Index
-	TextIndex   fulltext.Index
+	Config          *config.Config
+	Store           storage.Store
+	Provider        embedding.Provider
+	VectorIndex     vector.Index
+	TextIndex       fulltext.Index
+	InferenceRouter *inference.DefaultRouter
 }
 
 // NewServer creates a new MCP server for MAIA.
@@ -93,12 +96,13 @@ func NewServer(opts *Options) (*Server, error) {
 	assembler := ctxpkg.NewAssembler(ctxpkg.DefaultAssemblerConfig())
 
 	s := &Server{
-		server:    mcpServer,
-		store:     store,
-		retriever: retriever,
-		assembler: assembler,
-		provider:  provider,
-		cfg:       opts.Config,
+		server:          mcpServer,
+		store:           store,
+		retriever:       retriever,
+		assembler:       assembler,
+		provider:        provider,
+		cfg:             opts.Config,
+		inferenceRouter: opts.InferenceRouter,
 	}
 
 	// Register tools

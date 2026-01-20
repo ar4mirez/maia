@@ -14,33 +14,41 @@ import (
 
 	"github.com/ar4mirez/maia/internal/config"
 	mcontext "github.com/ar4mirez/maia/internal/context"
+	"github.com/ar4mirez/maia/internal/inference"
+	"github.com/ar4mirez/maia/internal/inference/providers/anthropic"
+	"github.com/ar4mirez/maia/internal/inference/providers/ollama"
+	"github.com/ar4mirez/maia/internal/inference/providers/openrouter"
 	"github.com/ar4mirez/maia/internal/metrics"
 	"github.com/ar4mirez/maia/internal/query"
 	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
 	"github.com/ar4mirez/maia/internal/tenant"
+	"github.com/ar4mirez/maia/pkg/proxy"
 )
 
 // Server represents the MAIA HTTP server.
 type Server struct {
-	cfg       *config.Config
-	store     storage.Store
-	tenants   tenant.Manager
-	logger    *zap.Logger
-	router    *gin.Engine
-	server    *http.Server
-	analyzer  *query.Analyzer
-	retriever *retrieval.Retriever
-	assembler *mcontext.Assembler
-	metrics   *metrics.Metrics
+	cfg             *config.Config
+	store           storage.Store
+	tenants         tenant.Manager
+	logger          *zap.Logger
+	router          *gin.Engine
+	server          *http.Server
+	analyzer        *query.Analyzer
+	retriever       *retrieval.Retriever
+	assembler       *mcontext.Assembler
+	metrics         *metrics.Metrics
+	inferenceRouter *inference.DefaultRouter
+	proxy           *proxy.Proxy
 }
 
 // ServerDeps holds optional dependencies for the server.
 type ServerDeps struct {
-	Retriever     *retrieval.Retriever
-	Assembler     *mcontext.Assembler
-	Analyzer      *query.Analyzer
-	TenantManager tenant.Manager
+	Retriever       *retrieval.Retriever
+	Assembler       *mcontext.Assembler
+	Analyzer        *query.Analyzer
+	TenantManager   tenant.Manager
+	InferenceRouter *inference.DefaultRouter
 }
 
 // New creates a new HTTP server.
@@ -73,6 +81,7 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 		s.assembler = deps.Assembler
 		s.analyzer = deps.Analyzer
 		s.tenants = deps.TenantManager
+		s.inferenceRouter = deps.InferenceRouter
 	}
 
 	// Create default analyzer if not provided
@@ -85,10 +94,136 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 		s.assembler = mcontext.NewAssembler(mcontext.DefaultAssemblerConfig())
 	}
 
+	// Initialize inference router if enabled and not provided
+	if cfg.Inference.Enabled && s.inferenceRouter == nil {
+		s.inferenceRouter = s.initInferenceRouter()
+	}
+
+	// Initialize proxy if backend is configured or inference is enabled
+	if cfg.Proxy.Backend != "" || cfg.Inference.Enabled {
+		s.initProxy()
+	}
+
 	s.setupMiddleware()
 	s.setupRoutes()
 
 	return s
+}
+
+// initInferenceRouter initializes the inference router based on configuration.
+func (s *Server) initInferenceRouter() *inference.DefaultRouter {
+	routingCfg := inference.RoutingConfig{
+		ModelMapping: s.cfg.Inference.Routing.ModelMapping,
+	}
+	router := inference.NewRouter(routingCfg, s.cfg.Inference.DefaultProvider)
+
+	// Register configured providers
+	for name, provCfg := range s.cfg.Inference.Providers {
+		infCfg := inference.ProviderConfig{
+			Type:       provCfg.Type,
+			BaseURL:    provCfg.BaseURL,
+			APIKey:     provCfg.APIKey,
+			Models:     provCfg.Models,
+			Timeout:    provCfg.Timeout,
+			MaxRetries: provCfg.MaxRetries,
+		}
+
+		var provider inference.Provider
+		var err error
+
+		switch provCfg.Type {
+		case "ollama":
+			provider, err = ollama.NewProvider(name, infCfg)
+		case "openrouter":
+			provider, err = openrouter.NewProvider(name, infCfg)
+		case "anthropic":
+			provider, err = anthropic.NewProvider(name, infCfg)
+		default:
+			s.logger.Warn("unknown inference provider type",
+				zap.String("name", name),
+				zap.String("type", provCfg.Type),
+			)
+			continue
+		}
+
+		if err != nil {
+			s.logger.Error("failed to create inference provider",
+				zap.String("name", name),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		if err := router.RegisterProvider(provider); err != nil {
+			s.logger.Error("failed to register inference provider",
+				zap.String("name", name),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		s.logger.Info("registered inference provider",
+			zap.String("name", name),
+			zap.String("type", provCfg.Type),
+		)
+	}
+
+	// Set up health checking if configured
+	if s.cfg.Inference.Health.Enabled {
+		healthCfg := inference.HealthConfig{
+			Enabled:            true,
+			Interval:           s.cfg.Inference.Health.Interval,
+			Timeout:            s.cfg.Inference.Health.Timeout,
+			UnhealthyThreshold: s.cfg.Inference.Health.UnhealthyThreshold,
+			HealthyThreshold:   s.cfg.Inference.Health.HealthyThreshold,
+		}
+		if healthCfg.Interval == 0 {
+			healthCfg.Interval = inference.DefaultHealthConfig().Interval
+		}
+		if healthCfg.Timeout == 0 {
+			healthCfg.Timeout = inference.DefaultHealthConfig().Timeout
+		}
+		if healthCfg.UnhealthyThreshold == 0 {
+			healthCfg.UnhealthyThreshold = inference.DefaultHealthConfig().UnhealthyThreshold
+		}
+		if healthCfg.HealthyThreshold == 0 {
+			healthCfg.HealthyThreshold = inference.DefaultHealthConfig().HealthyThreshold
+		}
+
+		healthChecker := inference.NewHealthChecker(healthCfg)
+		router.SetHealthChecker(healthChecker)
+		healthChecker.Start()
+
+		s.logger.Info("inference health checking enabled",
+			zap.Duration("interval", healthCfg.Interval),
+			zap.Int("unhealthy_threshold", healthCfg.UnhealthyThreshold),
+		)
+	}
+
+	return router
+}
+
+// initProxy initializes the OpenAI-compatible proxy.
+func (s *Server) initProxy() {
+	proxyCfg := &proxy.ProxyConfig{
+		Backend:          s.cfg.Proxy.Backend,
+		AutoRemember:     s.cfg.Proxy.AutoRemember,
+		AutoContext:      s.cfg.Proxy.AutoContext,
+		ContextPosition:  proxy.ContextPosition(s.cfg.Proxy.ContextPosition),
+		TokenBudget:      s.cfg.Proxy.TokenBudget,
+		DefaultNamespace: s.cfg.Memory.DefaultNamespace,
+		Timeout:          s.cfg.Server.RequestTimeout,
+	}
+
+	proxyDeps := &proxy.ProxyDeps{
+		Store:           s.store,
+		Retriever:       s.retriever,
+		Assembler:       s.assembler,
+		Logger:          s.logger,
+		InferenceRouter: s.inferenceRouter,
+	}
+
+	s.proxy = proxy.NewProxy(proxyCfg, proxyDeps)
 }
 
 // setupMiddleware configures middleware for the router.
@@ -273,6 +408,14 @@ func (s *Server) setupRoutes() {
 			}
 		}
 	}
+
+	// OpenAI-compatible proxy routes (if proxy is initialized)
+	if s.proxy != nil {
+		s.proxy.RegisterRoutes(s.router)
+		s.logger.Info("proxy routes registered",
+			zap.Bool("inference_enabled", s.inferenceRouter != nil),
+		)
+	}
 }
 
 // Start starts the HTTP server.
@@ -302,6 +445,14 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
+
+	// Close inference router if initialized
+	if s.inferenceRouter != nil {
+		if err := s.inferenceRouter.Close(); err != nil {
+			s.logger.Error("failed to close inference router", zap.Error(err))
+		}
+	}
+
 	return s.server.Shutdown(ctx)
 }
 

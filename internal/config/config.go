@@ -35,6 +35,9 @@ type Config struct {
 
 	// Tracing configuration
 	Tracing TracingConfig `mapstructure:"tracing"`
+
+	// Inference configuration
+	Inference InferenceConfig `mapstructure:"inference"`
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.
@@ -125,6 +128,73 @@ type AuthorizationConfig struct {
 	APIKeyPermissions map[string][]string `mapstructure:"api_key_permissions"`
 }
 
+// InferenceConfig holds inference provider settings.
+type InferenceConfig struct {
+	// Enabled controls whether inference is active. Defaults to false (opt-in).
+	Enabled bool `mapstructure:"enabled"`
+	// DefaultProvider is the fallback provider when no routing rule matches.
+	DefaultProvider string `mapstructure:"default_provider"`
+	// Providers maps provider names to their configurations.
+	Providers map[string]InferenceProviderConfig `mapstructure:"providers"`
+	// Routing holds routing configuration.
+	Routing InferenceRoutingConfig `mapstructure:"routing"`
+	// Cache holds caching configuration.
+	Cache InferenceCacheConfig `mapstructure:"cache"`
+	// Health holds health checking configuration.
+	Health InferenceHealthConfig `mapstructure:"health"`
+}
+
+// InferenceProviderConfig holds configuration for a single inference provider.
+type InferenceProviderConfig struct {
+	// Type specifies the provider type: "ollama", "openrouter", "anthropic".
+	Type string `mapstructure:"type"`
+	// BaseURL is the API endpoint URL.
+	BaseURL string `mapstructure:"base_url"`
+	// APIKey is the API key for authenticated providers.
+	APIKey string `mapstructure:"api_key"`
+	// Models is an optional list of models this provider supports.
+	Models []string `mapstructure:"models"`
+	// Timeout is the request timeout.
+	Timeout time.Duration `mapstructure:"timeout"`
+	// MaxRetries is the number of retry attempts on failure.
+	MaxRetries int `mapstructure:"max_retries"`
+}
+
+// InferenceRoutingConfig holds routing configuration.
+type InferenceRoutingConfig struct {
+	// ModelMapping maps model patterns to provider names.
+	// Patterns support wildcards: "llama*" matches "llama2", "llama3", etc.
+	ModelMapping map[string]string `mapstructure:"model_mapping"`
+}
+
+// InferenceCacheConfig holds caching configuration.
+type InferenceCacheConfig struct {
+	// Enabled controls whether response caching is active.
+	Enabled bool `mapstructure:"enabled"`
+	// TTL is the cache entry time-to-live.
+	TTL time.Duration `mapstructure:"ttl"`
+	// Namespace is the MAIA namespace for cached responses.
+	Namespace string `mapstructure:"namespace"`
+	// MaxEntries is the maximum number of cached responses.
+	MaxEntries int `mapstructure:"max_entries"`
+}
+
+// InferenceHealthConfig holds health checking configuration.
+type InferenceHealthConfig struct {
+	// Enabled controls whether health checking is active.
+	Enabled bool `mapstructure:"enabled"`
+	// Interval is the time between health checks.
+	Interval time.Duration `mapstructure:"interval"`
+	// Timeout is the timeout for each health check.
+	Timeout time.Duration `mapstructure:"timeout"`
+	// UnhealthyThreshold is the number of consecutive failures
+	// before a provider is marked unhealthy.
+	UnhealthyThreshold int `mapstructure:"unhealthy_threshold"`
+	// HealthyThreshold is the number of consecutive successes
+	// before an unhealthy provider is marked healthy.
+	HealthyThreshold int `mapstructure:"healthy_threshold"`
+}
+
 // Default configuration values.
 var defaults = map[string]interface{}{
 	// Server defaults
@@ -181,6 +251,19 @@ var defaults = map[string]interface{}{
 	"tracing.endpoint":        "localhost:4318",
 	"tracing.insecure":        true,
 	"tracing.sample_rate":     1.0,
+
+	// Inference defaults (opt-in)
+	"inference.enabled":                    false,
+	"inference.default_provider":           "ollama",
+	"inference.cache.enabled":              false,
+	"inference.cache.ttl":                  "24h",
+	"inference.cache.namespace":            "inference:cache",
+	"inference.cache.max_entries":          1000,
+	"inference.health.enabled":             false,
+	"inference.health.interval":            "30s",
+	"inference.health.timeout":             "10s",
+	"inference.health.unhealthy_threshold": 3,
+	"inference.health.healthy_threshold":   2,
 }
 
 // Load loads configuration from environment variables and optional config file.
