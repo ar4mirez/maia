@@ -8,6 +8,7 @@ import (
 
 	"github.com/ar4mirez/maia/internal/embedding"
 	"github.com/ar4mirez/maia/internal/index/fulltext"
+	"github.com/ar4mirez/maia/internal/index/graph"
 	"github.com/ar4mirez/maia/internal/index/vector"
 	"github.com/ar4mirez/maia/internal/query"
 	"github.com/ar4mirez/maia/internal/storage"
@@ -18,6 +19,7 @@ type Retriever struct {
 	store       storage.Store
 	vectorIndex vector.Index
 	textIndex   fulltext.Index
+	graphIndex  graph.Index
 	embedder    embedding.Provider
 	scorer      *Scorer
 	config      Config
@@ -40,6 +42,9 @@ type Config struct {
 	// FrequencyWeight is the weight for access frequency scores.
 	FrequencyWeight float64
 
+	// GraphWeight is the weight for graph connectivity scores.
+	GraphWeight float64
+
 	// MinScore is the minimum score threshold for results.
 	MinScore float64
 }
@@ -48,10 +53,11 @@ type Config struct {
 func DefaultConfig() Config {
 	return Config{
 		DefaultLimit:    10,
-		VectorWeight:    0.4,
+		VectorWeight:    0.35,
 		TextWeight:      0.25,
-		RecencyWeight:   0.25,
-		FrequencyWeight: 0.1,
+		RecencyWeight:   0.20,
+		FrequencyWeight: 0.10,
+		GraphWeight:     0.10,
 		MinScore:        0.0,
 	}
 }
@@ -72,6 +78,31 @@ func NewRetriever(
 		scorer:      NewScorer(config),
 		config:      config,
 	}
+}
+
+// NewRetrieverWithGraph creates a new retriever with graph index support.
+func NewRetrieverWithGraph(
+	store storage.Store,
+	vectorIndex vector.Index,
+	textIndex fulltext.Index,
+	graphIndex graph.Index,
+	embedder embedding.Provider,
+	config Config,
+) *Retriever {
+	return &Retriever{
+		store:       store,
+		vectorIndex: vectorIndex,
+		textIndex:   textIndex,
+		graphIndex:  graphIndex,
+		embedder:    embedder,
+		scorer:      NewScorer(config),
+		config:      config,
+	}
+}
+
+// SetGraphIndex sets the graph index for the retriever.
+func (r *Retriever) SetGraphIndex(idx graph.Index) {
+	r.graphIndex = idx
 }
 
 // RetrieveOptions configures a retrieval operation.
@@ -97,6 +128,19 @@ type RetrieveOptions struct {
 	// UseText enables full-text search.
 	UseText bool
 
+	// UseGraph enables graph-based retrieval.
+	UseGraph bool
+
+	// RelatedTo specifies memory IDs to find related memories for.
+	// When set, graph traversal will boost memories connected to these IDs.
+	RelatedTo []string
+
+	// GraphRelations filters graph edges by relationship types.
+	GraphRelations []string
+
+	// GraphDepth specifies the maximum graph traversal depth (default: 2).
+	GraphDepth int
+
 	// Analysis is the query analysis result (optional).
 	Analysis *query.Analysis
 }
@@ -104,21 +148,24 @@ type RetrieveOptions struct {
 // DefaultRetrieveOptions returns default retrieval options.
 func DefaultRetrieveOptions() *RetrieveOptions {
 	return &RetrieveOptions{
-		Limit:     10,
-		UseVector: true,
-		UseText:   true,
-		MinScore:  0.0,
+		Limit:      10,
+		UseVector:  true,
+		UseText:    true,
+		UseGraph:   true,
+		GraphDepth: 2,
+		MinScore:   0.0,
 	}
 }
 
 // Result represents a single retrieval result.
 type Result struct {
-	Memory     *storage.Memory
-	Score      float64
-	VectorScore float64
-	TextScore   float64
+	Memory       *storage.Memory
+	Score        float64
+	VectorScore  float64
+	TextScore    float64
 	RecencyScore float64
-	Highlights  map[string][]string
+	GraphScore   float64
+	Highlights   map[string][]string
 }
 
 // Results represents retrieval results.
@@ -171,6 +218,20 @@ func (r *Retriever) Retrieve(ctx context.Context, queryText string, opts *Retrie
 		}
 	}
 
+	// Graph search - find memories related to specified IDs
+	if opts.UseGraph && r.graphIndex != nil && len(opts.RelatedTo) > 0 {
+		graphResults, err := r.graphSearch(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		for id, score := range graphResults {
+			if _, exists := candidates[id]; !exists {
+				candidates[id] = &candidateScore{}
+			}
+			candidates[id].graphScore = score
+		}
+	}
+
 	// If no candidates from searches, try storage search
 	if len(candidates) == 0 {
 		storageResults, err := r.storageSearch(ctx, queryText, opts)
@@ -204,12 +265,19 @@ func (r *Retriever) Retrieve(ctx context.Context, queryText string, opts *Retrie
 		// Calculate recency score
 		recencyScore := r.scorer.RecencyScore(mem.AccessedAt)
 
+		// Calculate graph score if not already set
+		graphScore := scores.graphScore
+		if graphScore == 0 && opts.UseGraph && r.graphIndex != nil && len(opts.RelatedTo) > 0 {
+			graphScore = r.calculateGraphScore(ctx, id, opts.RelatedTo)
+		}
+
 		// Calculate final score
-		finalScore := r.scorer.CombinedScore(
+		finalScore := r.scorer.CombinedScoreWithGraph(
 			scores.vectorScore,
 			scores.textScore,
 			recencyScore,
 			float64(mem.AccessCount),
+			graphScore,
 		)
 
 		if finalScore < opts.MinScore {
@@ -222,6 +290,7 @@ func (r *Retriever) Retrieve(ctx context.Context, queryText string, opts *Retrie
 			VectorScore:  scores.vectorScore,
 			TextScore:    scores.textScore,
 			RecencyScore: recencyScore,
+			GraphScore:   graphScore,
 			Highlights:   scores.highlights,
 		})
 	}
@@ -320,10 +389,94 @@ func (r *Retriever) storageSearch(ctx context.Context, queryText string, opts *R
 	return ids, nil
 }
 
+// graphSearch finds memories related to the specified IDs via graph traversal.
+func (r *Retriever) graphSearch(ctx context.Context, opts *RetrieveOptions) (map[string]float64, error) {
+	scores := make(map[string]float64)
+
+	depth := opts.GraphDepth
+	if depth <= 0 {
+		depth = 2
+	}
+
+	traversalOpts := &graph.TraversalOptions{
+		Direction:  graph.DirectionBoth,
+		MaxDepth:   depth,
+		MaxResults: opts.Limit * 3, // Get more for filtering
+		Relations:  opts.GraphRelations,
+	}
+
+	for _, sourceID := range opts.RelatedTo {
+		results, err := r.graphIndex.Traverse(ctx, sourceID, traversalOpts)
+		if err != nil {
+			continue // Skip errors for individual sources
+		}
+
+		for _, result := range results {
+			// Calculate score based on depth and cumulative weight
+			// Closer nodes get higher scores
+			depthFactor := 1.0 / float64(result.Depth)
+			score := float64(result.Cumulative) * depthFactor
+
+			// Keep the highest score if we've seen this ID before
+			if existing, ok := scores[result.ID]; !ok || score > existing {
+				scores[result.ID] = score
+			}
+		}
+	}
+
+	return scores, nil
+}
+
+// calculateGraphScore calculates a graph connectivity score for a candidate.
+func (r *Retriever) calculateGraphScore(ctx context.Context, candidateID string, relatedTo []string) float64 {
+	if r.graphIndex == nil || len(relatedTo) == 0 {
+		return 0
+	}
+
+	var maxScore float64
+	for _, sourceID := range relatedTo {
+		// Check direct connection
+		if r.graphIndex.HasEdge(ctx, sourceID, candidateID, "") {
+			return 1.0 // Direct connection = max score
+		}
+		if r.graphIndex.HasEdge(ctx, candidateID, sourceID, "") {
+			return 1.0 // Direct connection in reverse = max score
+		}
+
+		// Check 2-hop connection
+		outgoing, err := r.graphIndex.GetOutgoing(ctx, sourceID)
+		if err == nil {
+			for _, edge := range outgoing {
+				if r.graphIndex.HasEdge(ctx, edge.TargetID, candidateID, "") {
+					score := float64(edge.Weight) * 0.5 // 2-hop penalty
+					if score > maxScore {
+						maxScore = score
+					}
+				}
+			}
+		}
+
+		incoming, err := r.graphIndex.GetIncoming(ctx, sourceID)
+		if err == nil {
+			for _, edge := range incoming {
+				if r.graphIndex.HasEdge(ctx, edge.SourceID, candidateID, "") {
+					score := float64(edge.Weight) * 0.5 // 2-hop penalty
+					if score > maxScore {
+						maxScore = score
+					}
+				}
+			}
+		}
+	}
+
+	return maxScore
+}
+
 // candidateScore holds scores for a candidate.
 type candidateScore struct {
 	vectorScore float64
 	textScore   float64
+	graphScore  float64
 	highlights  map[string][]string
 }
 

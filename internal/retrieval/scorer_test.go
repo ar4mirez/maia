@@ -86,15 +86,16 @@ func TestScorer_CombinedScore(t *testing.T) {
 
 	t.Run("combines scores with weights", func(t *testing.T) {
 		score := scorer.CombinedScore(1.0, 1.0, 1.0, 100)
-		assert.Greater(t, score, 0.9)
+		// With graph weight = 0.15 and graph score = 0, max score is 0.85
+		assert.Greater(t, score, 0.75)
 	})
 
 	t.Run("high vector score dominates", func(t *testing.T) {
 		highVector := scorer.CombinedScore(1.0, 0.0, 0.0, 0)
 
-		// Vector has weight 0.4
+		// Vector has weight 0.35
 		assert.Greater(t, highVector, 0.3)
-		assert.Less(t, highVector, 0.5)
+		assert.Less(t, highVector, 0.45)
 	})
 
 	t.Run("score is bounded 0-1", func(t *testing.T) {
@@ -103,6 +104,25 @@ func TestScorer_CombinedScore(t *testing.T) {
 
 		score = scorer.CombinedScore(-1.0, -1.0, -1.0, 0)
 		assert.GreaterOrEqual(t, score, 0.0)
+	})
+}
+
+func TestScorer_CombinedScoreWithGraph(t *testing.T) {
+	scorer := NewScorer(DefaultConfig())
+
+	t.Run("includes graph score", func(t *testing.T) {
+		// With graph score = 1.0, we get full weight
+		scoreWithGraph := scorer.CombinedScoreWithGraph(1.0, 1.0, 1.0, 100, 1.0)
+		scoreWithoutGraph := scorer.CombinedScore(1.0, 1.0, 1.0, 100)
+
+		assert.Greater(t, scoreWithGraph, scoreWithoutGraph)
+	})
+
+	t.Run("graph score contributes correctly", func(t *testing.T) {
+		// Only graph score
+		score := scorer.CombinedScoreWithGraph(0, 0, 0, 0, 1.0)
+		// Should be equal to graph weight (0.10)
+		assert.InDelta(t, 0.10, score, 0.01)
 	})
 }
 
@@ -182,12 +202,13 @@ func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
 
 	assert.Equal(t, 10, cfg.DefaultLimit)
-	assert.Equal(t, 0.4, cfg.VectorWeight)
+	assert.Equal(t, 0.35, cfg.VectorWeight)
 	assert.Equal(t, 0.25, cfg.TextWeight)
-	assert.Equal(t, 0.25, cfg.RecencyWeight)
-	assert.Equal(t, 0.1, cfg.FrequencyWeight)
+	assert.Equal(t, 0.20, cfg.RecencyWeight)
+	assert.Equal(t, 0.10, cfg.FrequencyWeight)
+	assert.Equal(t, 0.10, cfg.GraphWeight)
 
 	// Weights should sum to 1.0
-	totalWeight := cfg.VectorWeight + cfg.TextWeight + cfg.RecencyWeight + cfg.FrequencyWeight
+	totalWeight := cfg.VectorWeight + cfg.TextWeight + cfg.RecencyWeight + cfg.FrequencyWeight + cfg.GraphWeight
 	assert.Equal(t, 1.0, totalWeight)
 }

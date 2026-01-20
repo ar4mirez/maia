@@ -527,11 +527,66 @@ async with AsyncMAIAClient() as client:
 
 ---
 
+### SESSION 14 (2026-01-19) - Graph Index Implementation
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+- [x] Created RFD 0003 for Graph Index architecture
+- [x] Implemented graph index types and interfaces (Edge, TraversalOptions, TraversalResult, Index)
+- [x] Implemented InMemoryIndex with adjacency list storage
+- [x] Implemented graph traversal (BFS-based) with depth and relation filtering
+- [x] Implemented graph index persistence (Save/Load) with binary format
+- [x] Added comprehensive graph index tests (90.2% coverage)
+- [x] Integrated graph index with retrieval layer
+- [x] Added GraphWeight to retrieval scoring (default: 0.10)
+- [x] Added graph search methods to Retriever
+- [x] Added CombinedScoreWithGraph to Scorer
+- [x] Overall coverage improved from 75.8% to 76.0%
+
+**Key Components Added**:
+- `internal/index/graph/types.go` - Edge, TraversalOptions, TraversalResult, Index interface
+- `internal/index/graph/index.go` - InMemoryIndex implementation
+- `internal/index/graph/persistence.go` - Binary serialization
+- `internal/index/graph/index_test.go` - Comprehensive tests
+- `.agent/rfd/0003-graph-index.md` - Architecture decision
+
+**Graph Index Features**:
+- Directed edges with relationship types (related_to, references, follows, caused_by, etc.)
+- Bidirectional traversal (outgoing, incoming, both)
+- Multi-hop graph traversal with BFS
+- Depth and result limits
+- Relation and weight filtering
+- Cycle detection (visited tracking)
+- Cumulative weight calculation along paths
+- Binary persistence with magic number validation
+
+**Retrieval Integration**:
+- New RetrieveOptions: UseGraph, RelatedTo, GraphRelations, GraphDepth
+- NewRetrieverWithGraph constructor
+- SetGraphIndex method for dynamic graph index assignment
+- Graph score contributes to combined relevance score
+
+**Coverage Summary**:
+
+| Package | Coverage | Target |
+|---------|----------|--------|
+| internal/index/graph | 90.2% | 85% ✅ |
+| internal/retrieval | 69.7% | 85% 🟡 |
+| **Overall** | 76.0% | 70% ✅ |
+
+**Notes**:
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- Graph index enables relationship-based memory retrieval
+
+---
+
 ## Next Steps
 
 1. **Performance Testing** - Load testing under realistic conditions
 2. **Multi-tenancy** - Enhance for multi-tenant deployments
-3. **Graph Index Implementation** - Add relationship-based memory retrieval
+3. **Retrieval Tests** - Improve retrieval package coverage to 85%
 
 ---
 

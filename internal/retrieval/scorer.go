@@ -15,15 +15,21 @@ func NewScorer(config Config) *Scorer {
 	return &Scorer{config: config}
 }
 
-// CombinedScore calculates the final combined score.
+// CombinedScore calculates the final combined score (without graph).
 func (s *Scorer) CombinedScore(vectorScore, textScore, recencyScore, accessCount float64) float64 {
+	return s.CombinedScoreWithGraph(vectorScore, textScore, recencyScore, accessCount, 0)
+}
+
+// CombinedScoreWithGraph calculates the final combined score including graph connectivity.
+func (s *Scorer) CombinedScoreWithGraph(vectorScore, textScore, recencyScore, accessCount, graphScore float64) float64 {
 	// Normalize access count to 0-1 range using log scale
 	frequencyScore := s.FrequencyScore(accessCount)
 
 	score := s.config.VectorWeight*vectorScore +
 		s.config.TextWeight*textScore +
 		s.config.RecencyWeight*recencyScore +
-		s.config.FrequencyWeight*frequencyScore
+		s.config.FrequencyWeight*frequencyScore +
+		s.config.GraphWeight*graphScore
 
 	// Ensure score is in 0-1 range
 	if score > 1.0 {
