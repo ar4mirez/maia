@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "maia": {
+      "command": "/path/to/maia/build/mcp-server",
+      "args": [],
+      "env": {
+        "MAIA_DATA_DIR": "/path/to/maia/data",
+        "MAIA_DEFAULT_NAMESPACE": "claude",
+        "MAIA_LOG_LEVEL": "info"
+      }
+    }
+  }
+}

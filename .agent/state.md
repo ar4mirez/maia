@@ -788,12 +788,55 @@ POST   /admin/tenants/:id/activate     # Activate tenant
 
 ---
 
+### SESSION 20 (2026-01-19) - Documentation & Examples
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Fixed Docker build issues (Go version mismatch, obsolete version attribute, broken COPY)
+- [x] Created `.agent/patterns.md` with comprehensive coding patterns:
+  - Package structure patterns
+  - Error handling patterns
+  - Testing patterns (setup/cleanup, table-driven, HTTP handlers, mocks)
+  - HTTP handler patterns
+  - Storage layer patterns
+  - Functional options pattern
+  - Context usage patterns
+  - Logging patterns
+- [x] Created `examples/basic-usage/` with:
+  - README.md with curl, Go SDK, and CLI examples
+  - main.go demonstrating full SDK usage
+- [x] Created `examples/mcp-integration/` with:
+  - README.md documenting MCP tools, resources, and prompts
+  - Claude Desktop and Cursor configuration examples
+- [x] Created `examples/multi-agent/` with:
+  - README.md explaining multi-agent architecture
+  - main.go demonstrating research, code, and review agents
+- [x] Created `examples/proxy-usage/` with:
+  - README.md documenting proxy headers and usage
+  - main.go demonstrating OpenAI proxy integration
+
+**Key Files Created**:
+
+- `.agent/patterns.md` - Coding conventions and patterns
+- `examples/basic-usage/README.md` + `main.go`
+- `examples/mcp-integration/README.md` + `claude_desktop_config.json`
+- `examples/multi-agent/README.md` + `main.go`
+- `examples/proxy-usage/README.md` + `main.go`
+
+**Commits**:
+
+- `65a04ac fix(docker): update Go version and fix build issues`
+
+---
+
 ## Next Steps
 
 1. **Production Load Testing** - Test under production-like conditions with larger datasets
 2. **Performance Optimization** - Profile and optimize hot paths if needed
-3. **Documentation** - Consider adding more user-facing documentation
-4. **Tenant-Aware Storage** - Implement prefix-based isolation per RFD 0004 Phase 2
+3. **Tenant-Aware Storage** - Implement prefix-based isolation per RFD 0004 Phase 2
+4. **Graph Index Examples** - Add examples for relationship-based retrieval
 
 ---
 
