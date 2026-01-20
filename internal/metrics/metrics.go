@@ -40,6 +40,14 @@ type Metrics struct {
 
 	// Rate limiting
 	RateLimitedRequests *prometheus.CounterVec
+
+	// Tenant metrics
+	TenantMemoriesTotal    *prometheus.GaugeVec
+	TenantStorageBytes     *prometheus.GaugeVec
+	TenantRequestsTotal    *prometheus.CounterVec
+	TenantQuotaUsage       *prometheus.GaugeVec
+	TenantActiveTotal      prometheus.Gauge
+	TenantOperationsTotal  *prometheus.CounterVec
 }
 
 // New creates a new Metrics instance with all metrics registered.
@@ -218,6 +226,55 @@ func New(namespace string) *Metrics {
 			},
 			[]string{"client_ip"},
 		),
+
+		// Tenant metrics
+		TenantMemoriesTotal: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "tenant_memories_total",
+				Help:      "Total memories stored per tenant",
+			},
+			[]string{"tenant_id", "plan"},
+		),
+		TenantStorageBytes: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "tenant_storage_bytes",
+				Help:      "Storage usage in bytes per tenant",
+			},
+			[]string{"tenant_id"},
+		),
+		TenantRequestsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "tenant_requests_total",
+				Help:      "Total requests per tenant",
+			},
+			[]string{"tenant_id", "method", "status"},
+		),
+		TenantQuotaUsage: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "tenant_quota_usage_ratio",
+				Help:      "Quota usage ratio (0-1) per tenant and resource type",
+			},
+			[]string{"tenant_id", "resource"},
+		),
+		TenantActiveTotal: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "tenants_active_total",
+				Help:      "Total number of active tenants",
+			},
+		),
+		TenantOperationsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "tenant_operations_total",
+				Help:      "Total tenant management operations",
+			},
+			[]string{"operation", "status"},
+		),
 	}
 
 	return m
@@ -321,4 +378,39 @@ func statusToString(status int) string {
 	default:
 		return "1xx"
 	}
+}
+
+// SetTenantMemories sets the total memories for a tenant.
+func (m *Metrics) SetTenantMemories(tenantID, plan string, count int64) {
+	m.TenantMemoriesTotal.WithLabelValues(tenantID, plan).Set(float64(count))
+}
+
+// SetTenantStorage sets the storage usage for a tenant.
+func (m *Metrics) SetTenantStorage(tenantID string, bytes int64) {
+	m.TenantStorageBytes.WithLabelValues(tenantID).Set(float64(bytes))
+}
+
+// RecordTenantRequest records a request for a tenant.
+func (m *Metrics) RecordTenantRequest(tenantID, method string, status int) {
+	statusStr := statusToString(status)
+	m.TenantRequestsTotal.WithLabelValues(tenantID, method, statusStr).Inc()
+}
+
+// SetTenantQuotaUsage sets the quota usage ratio for a tenant resource.
+func (m *Metrics) SetTenantQuotaUsage(tenantID, resource string, ratio float64) {
+	m.TenantQuotaUsage.WithLabelValues(tenantID, resource).Set(ratio)
+}
+
+// SetActiveTenants sets the total number of active tenants.
+func (m *Metrics) SetActiveTenants(count int64) {
+	m.TenantActiveTotal.Set(float64(count))
+}
+
+// RecordTenantOperation records a tenant management operation.
+func (m *Metrics) RecordTenantOperation(operation string, success bool) {
+	status := "success"
+	if !success {
+		status = "error"
+	}
+	m.TenantOperationsTotal.WithLabelValues(operation, status).Inc()
 }

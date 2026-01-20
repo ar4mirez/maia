@@ -18,12 +18,14 @@ import (
 	"github.com/ar4mirez/maia/internal/query"
 	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
+	"github.com/ar4mirez/maia/internal/tenant"
 )
 
 // Server represents the MAIA HTTP server.
 type Server struct {
 	cfg       *config.Config
 	store     storage.Store
+	tenants   tenant.Manager
 	logger    *zap.Logger
 	router    *gin.Engine
 	server    *http.Server
@@ -35,9 +37,10 @@ type Server struct {
 
 // ServerDeps holds optional dependencies for the server.
 type ServerDeps struct {
-	Retriever *retrieval.Retriever
-	Assembler *mcontext.Assembler
-	Analyzer  *query.Analyzer
+	Retriever     *retrieval.Retriever
+	Assembler     *mcontext.Assembler
+	Analyzer      *query.Analyzer
+	TenantManager tenant.Manager
 }
 
 // New creates a new HTTP server.
@@ -69,6 +72,7 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 		s.retriever = deps.Retriever
 		s.assembler = deps.Assembler
 		s.analyzer = deps.Analyzer
+		s.tenants = deps.TenantManager
 	}
 
 	// Create default analyzer if not provided
@@ -250,6 +254,24 @@ func (s *Server) setupRoutes() {
 
 		// Stats
 		v1.GET("/stats", s.getStats)
+	}
+
+	// Admin API (requires tenant manager)
+	if s.tenants != nil {
+		admin := s.router.Group("/admin")
+		{
+			tenants := admin.Group("/tenants")
+			{
+				tenants.POST("", s.createTenant)
+				tenants.GET("", s.listTenants)
+				tenants.GET("/:id", s.getTenant)
+				tenants.PUT("/:id", s.updateTenant)
+				tenants.DELETE("/:id", s.deleteTenant)
+				tenants.GET("/:id/usage", s.getTenantUsage)
+				tenants.POST("/:id/suspend", s.suspendTenant)
+				tenants.POST("/:id/activate", s.activateTenant)
+			}
+		}
 	}
 }
 

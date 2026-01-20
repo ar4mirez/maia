@@ -738,11 +738,62 @@ async with AsyncMAIAClient() as client:
 
 ---
 
+### SESSION 19 (2026-01-19) - Admin API & Per-Tenant Metrics
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Implemented Admin API for tenant management (Phase 2 of RFD 0004)
+- [x] Added admin handlers: createTenant, getTenant, updateTenant, deleteTenant, listTenants
+- [x] Added admin handlers: getTenantUsage, suspendTenant, activateTenant
+- [x] Added protection against deleting/suspending system tenant
+- [x] Added comprehensive admin handler tests (21 tests)
+- [x] Added per-tenant Prometheus metrics:
+  - `maia_tenant_memories_total` - Total memories per tenant
+  - `maia_tenant_storage_bytes` - Storage usage per tenant
+  - `maia_tenant_requests_total` - Requests per tenant
+  - `maia_tenant_quota_usage_ratio` - Quota usage per tenant/resource
+  - `maia_tenants_active_total` - Total active tenants
+  - `maia_tenant_operations_total` - Tenant management operations
+- [x] Added metrics helper methods: SetTenantMemories, SetTenantStorage, RecordTenantRequest, SetTenantQuotaUsage, SetActiveTenants, RecordTenantOperation
+- [x] Added tenant metrics tests
+- [x] Server coverage improved from 83.6% to 79.9% (new code added)
+- [x] Metrics coverage improved from 97.5% to 98.0%
+
+**Admin API Endpoints**:
+```
+POST   /admin/tenants                  # Create tenant
+GET    /admin/tenants                  # List tenants (with status/plan filters)
+GET    /admin/tenants/:id              # Get tenant
+PUT    /admin/tenants/:id              # Update tenant
+DELETE /admin/tenants/:id              # Delete tenant
+GET    /admin/tenants/:id/usage        # Get usage stats
+POST   /admin/tenants/:id/suspend      # Suspend tenant
+POST   /admin/tenants/:id/activate     # Activate tenant
+```
+
+**Key Files Added**:
+
+- `internal/server/admin_handlers.go` - Admin API handlers
+- `internal/server/admin_handlers_test.go` - Admin API tests
+
+**Notes**:
+
+- Admin routes only registered when TenantManager is provided
+- System tenant cannot be deleted or suspended
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- Overall coverage: 78.2%
+
+---
+
 ## Next Steps
 
 1. **Production Load Testing** - Test under production-like conditions with larger datasets
 2. **Performance Optimization** - Profile and optimize hot paths if needed
 3. **Documentation** - Consider adding more user-facing documentation
+4. **Tenant-Aware Storage** - Implement prefix-based isolation per RFD 0004 Phase 2
 
 ---
 

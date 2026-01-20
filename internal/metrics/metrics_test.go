@@ -164,6 +164,53 @@ func newTestMetrics(t *testing.T) *Metrics {
 			},
 			[]string{"client_ip"},
 		),
+		TenantMemoriesTotal: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "test",
+				Name:      "tenant_memories_total",
+				Help:      "Total memories stored per tenant",
+			},
+			[]string{"tenant_id", "plan"},
+		),
+		TenantStorageBytes: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "test",
+				Name:      "tenant_storage_bytes",
+				Help:      "Storage usage in bytes per tenant",
+			},
+			[]string{"tenant_id"},
+		),
+		TenantRequestsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "test",
+				Name:      "tenant_requests_total",
+				Help:      "Total requests per tenant",
+			},
+			[]string{"tenant_id", "method", "status"},
+		),
+		TenantQuotaUsage: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: "test",
+				Name:      "tenant_quota_usage_ratio",
+				Help:      "Quota usage ratio (0-1) per tenant and resource type",
+			},
+			[]string{"tenant_id", "resource"},
+		),
+		TenantActiveTotal: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: "test",
+				Name:      "tenants_active_total",
+				Help:      "Total number of active tenants",
+			},
+		),
+		TenantOperationsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: "test",
+				Name:      "tenant_operations_total",
+				Help:      "Total tenant management operations",
+			},
+			[]string{"operation", "status"},
+		),
 	}
 
 	// Register all metrics
@@ -186,6 +233,12 @@ func newTestMetrics(t *testing.T) *Metrics {
 	reg.MustRegister(m.StorageOperations)
 	reg.MustRegister(m.IndexSizeBytes)
 	reg.MustRegister(m.RateLimitedRequests)
+	reg.MustRegister(m.TenantMemoriesTotal)
+	reg.MustRegister(m.TenantStorageBytes)
+	reg.MustRegister(m.TenantRequestsTotal)
+	reg.MustRegister(m.TenantQuotaUsage)
+	reg.MustRegister(m.TenantActiveTotal)
+	reg.MustRegister(m.TenantOperationsTotal)
 
 	return m
 }
@@ -356,4 +409,74 @@ func TestDefault(t *testing.T) {
 	// Call again to verify it returns the same instance
 	m2 := Default()
 	assert.Equal(t, m, m2)
+}
+
+func TestMetrics_SetTenantMemories(t *testing.T) {
+	m := newTestMetrics(t)
+
+	m.SetTenantMemories("tenant-1", "standard", 100)
+	m.SetTenantMemories("tenant-2", "premium", 500)
+
+	assert.Equal(t, float64(100), testutil.ToFloat64(m.TenantMemoriesTotal.WithLabelValues("tenant-1", "standard")))
+	assert.Equal(t, float64(500), testutil.ToFloat64(m.TenantMemoriesTotal.WithLabelValues("tenant-2", "premium")))
+}
+
+func TestMetrics_SetTenantStorage(t *testing.T) {
+	m := newTestMetrics(t)
+
+	m.SetTenantStorage("tenant-1", 1024*1024)      // 1MB
+	m.SetTenantStorage("tenant-2", 10*1024*1024)   // 10MB
+
+	assert.Equal(t, float64(1024*1024), testutil.ToFloat64(m.TenantStorageBytes.WithLabelValues("tenant-1")))
+	assert.Equal(t, float64(10*1024*1024), testutil.ToFloat64(m.TenantStorageBytes.WithLabelValues("tenant-2")))
+}
+
+func TestMetrics_RecordTenantRequest(t *testing.T) {
+	m := newTestMetrics(t)
+
+	m.RecordTenantRequest("tenant-1", "GET", 200)
+	m.RecordTenantRequest("tenant-1", "POST", 201)
+	m.RecordTenantRequest("tenant-1", "GET", 500)
+	m.RecordTenantRequest("tenant-2", "GET", 200)
+
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantRequestsTotal.WithLabelValues("tenant-1", "GET", "2xx")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantRequestsTotal.WithLabelValues("tenant-1", "POST", "2xx")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantRequestsTotal.WithLabelValues("tenant-1", "GET", "5xx")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantRequestsTotal.WithLabelValues("tenant-2", "GET", "2xx")))
+}
+
+func TestMetrics_SetTenantQuotaUsage(t *testing.T) {
+	m := newTestMetrics(t)
+
+	m.SetTenantQuotaUsage("tenant-1", "memories", 0.75)
+	m.SetTenantQuotaUsage("tenant-1", "storage", 0.50)
+	m.SetTenantQuotaUsage("tenant-2", "memories", 0.25)
+
+	assert.Equal(t, float64(0.75), testutil.ToFloat64(m.TenantQuotaUsage.WithLabelValues("tenant-1", "memories")))
+	assert.Equal(t, float64(0.50), testutil.ToFloat64(m.TenantQuotaUsage.WithLabelValues("tenant-1", "storage")))
+	assert.Equal(t, float64(0.25), testutil.ToFloat64(m.TenantQuotaUsage.WithLabelValues("tenant-2", "memories")))
+}
+
+func TestMetrics_SetActiveTenants(t *testing.T) {
+	m := newTestMetrics(t)
+
+	m.SetActiveTenants(10)
+	assert.Equal(t, float64(10), testutil.ToFloat64(m.TenantActiveTotal))
+
+	m.SetActiveTenants(15)
+	assert.Equal(t, float64(15), testutil.ToFloat64(m.TenantActiveTotal))
+}
+
+func TestMetrics_RecordTenantOperation(t *testing.T) {
+	m := newTestMetrics(t)
+
+	m.RecordTenantOperation("create", true)
+	m.RecordTenantOperation("create", false)
+	m.RecordTenantOperation("delete", true)
+	m.RecordTenantOperation("suspend", true)
+
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantOperationsTotal.WithLabelValues("create", "success")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantOperationsTotal.WithLabelValues("create", "error")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantOperationsTotal.WithLabelValues("delete", "success")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.TenantOperationsTotal.WithLabelValues("suspend", "success")))
 }
