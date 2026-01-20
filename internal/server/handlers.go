@@ -628,3 +628,192 @@ func parseIntQuery(c *gin.Context, key string, defaultVal int) int {
 	}
 	return defaultVal
 }
+
+// Inference health handler types
+
+// InferenceHealthResponse represents the health status of inference providers.
+type InferenceHealthResponse struct {
+	Enabled   bool                          `json:"enabled"`
+	Providers map[string]*ProviderHealthDTO `json:"providers,omitempty"`
+}
+
+// ProviderHealthDTO represents the health status of a single provider.
+type ProviderHealthDTO struct {
+	Status            string `json:"status"`
+	LastCheck         string `json:"last_check,omitempty"`
+	LastError         string `json:"last_error,omitempty"`
+	ConsecutiveErrors int    `json:"consecutive_errors"`
+	ConsecutiveOK     int    `json:"consecutive_ok"`
+}
+
+// getInferenceHealth returns the health status of all inference providers.
+func (s *Server) getInferenceHealth(c *gin.Context) {
+	if s.inferenceRouter == nil {
+		c.JSON(http.StatusOK, InferenceHealthResponse{
+			Enabled: false,
+		})
+		return
+	}
+
+	healthChecker := s.inferenceRouter.GetHealthChecker()
+	if healthChecker == nil {
+		// Inference enabled but no health checker
+		providers := make(map[string]*ProviderHealthDTO)
+		for _, p := range s.inferenceRouter.ListProviders() {
+			providers[p.Name()] = &ProviderHealthDTO{
+				Status: "unknown",
+			}
+		}
+		c.JSON(http.StatusOK, InferenceHealthResponse{
+			Enabled:   true,
+			Providers: providers,
+		})
+		return
+	}
+
+	// Get health for all providers
+	allHealth := healthChecker.GetAllHealth()
+	providers := make(map[string]*ProviderHealthDTO)
+
+	for name, health := range allHealth {
+		dto := &ProviderHealthDTO{
+			Status:            string(health.Status),
+			ConsecutiveErrors: health.ConsecutiveErrors,
+			ConsecutiveOK:     health.ConsecutiveOK,
+		}
+		if !health.LastCheck.IsZero() {
+			dto.LastCheck = health.LastCheck.Format("2006-01-02T15:04:05Z07:00")
+		}
+		if health.LastError != nil {
+			dto.LastError = health.LastError.Error()
+		}
+		providers[name] = dto
+	}
+
+	c.JSON(http.StatusOK, InferenceHealthResponse{
+		Enabled:   true,
+		Providers: providers,
+	})
+}
+
+// checkInferenceProviderHealth checks the health of a specific provider.
+func (s *Server) checkInferenceProviderHealth(c *gin.Context) {
+	providerName := c.Param("name")
+
+	if s.inferenceRouter == nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error: "inference not enabled",
+			Code:  "INFERENCE_DISABLED",
+		})
+		return
+	}
+
+	// Check if provider exists
+	provider, exists := s.inferenceRouter.GetProvider(providerName)
+	if !exists {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error: "provider not found",
+			Code:  "PROVIDER_NOT_FOUND",
+		})
+		return
+	}
+
+	healthChecker := s.inferenceRouter.GetHealthChecker()
+	if healthChecker == nil {
+		// No health checker, perform a direct health check
+		err := provider.Health(c.Request.Context())
+		status := "healthy"
+		var errMsg string
+		if err != nil {
+			status = "unhealthy"
+			errMsg = err.Error()
+		}
+		c.JSON(http.StatusOK, ProviderHealthDTO{
+			Status:    status,
+			LastError: errMsg,
+		})
+		return
+	}
+
+	// Perform immediate health check
+	if err := healthChecker.CheckNow(c.Request.Context(), providerName); err != nil {
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "failed to check provider health",
+			Code:  "HEALTH_CHECK_FAILED",
+		})
+		return
+	}
+
+	health, exists := healthChecker.GetHealth(providerName)
+	if !exists {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error: "provider health not found",
+			Code:  "HEALTH_NOT_FOUND",
+		})
+		return
+	}
+
+	dto := &ProviderHealthDTO{
+		Status:            string(health.Status),
+		ConsecutiveErrors: health.ConsecutiveErrors,
+		ConsecutiveOK:     health.ConsecutiveOK,
+	}
+	if !health.LastCheck.IsZero() {
+		dto.LastCheck = health.LastCheck.Format("2006-01-02T15:04:05Z07:00")
+	}
+	if health.LastError != nil {
+		dto.LastError = health.LastError.Error()
+	}
+
+	c.JSON(http.StatusOK, dto)
+}
+
+// CacheStatsResponse represents cache statistics.
+type CacheStatsResponse struct {
+	Enabled    bool   `json:"enabled"`
+	Hits       int64  `json:"hits"`
+	Misses     int64  `json:"misses"`
+	Evictions  int64  `json:"evictions"`
+	Size       int    `json:"size"`
+	LastAccess string `json:"last_access,omitempty"`
+}
+
+// getInferenceCacheStats returns the cache statistics.
+func (s *Server) getInferenceCacheStats(c *gin.Context) {
+	if s.inferenceCache == nil {
+		c.JSON(http.StatusOK, CacheStatsResponse{
+			Enabled: false,
+		})
+		return
+	}
+
+	stats := s.inferenceCache.Stats()
+	resp := CacheStatsResponse{
+		Enabled:   true,
+		Hits:      stats.Hits,
+		Misses:    stats.Misses,
+		Evictions: stats.Evictions,
+		Size:      stats.Size,
+	}
+	if !stats.LastAccess.IsZero() {
+		resp.LastAccess = stats.LastAccess.Format("2006-01-02T15:04:05Z07:00")
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+// clearInferenceCache clears all cached responses.
+func (s *Server) clearInferenceCache(c *gin.Context) {
+	if s.inferenceCache == nil {
+		c.JSON(http.StatusNotFound, ErrorResponse{
+			Error: "cache not enabled",
+			Code:  "CACHE_DISABLED",
+		})
+		return
+	}
+
+	s.inferenceCache.Clear(c.Request.Context())
+	c.JSON(http.StatusOK, gin.H{
+		"message": "cache cleared",
+	})
+}

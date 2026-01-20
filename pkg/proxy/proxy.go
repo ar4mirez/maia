@@ -40,7 +40,7 @@ type Proxy struct {
 
 	// inferenceRouter is an optional inference router for MAIA-managed inference.
 	// When set, the proxy uses the router instead of the client for inference.
-	inferenceRouter *inference.DefaultRouter
+	inferenceRouter inference.InferenceRouter
 
 	defaultNamespace string
 	defaultBudget    int
@@ -63,7 +63,7 @@ type ProxyDeps struct {
 	Retriever       *retrieval.Retriever
 	Assembler       *mcontext.Assembler
 	Logger          *zap.Logger
-	InferenceRouter *inference.DefaultRouter
+	InferenceRouter inference.InferenceRouter
 }
 
 // NewProxy creates a new OpenAI-compatible proxy.
@@ -107,7 +107,7 @@ func NewProxy(cfg *ProxyConfig, deps *ProxyDeps) *Proxy {
 }
 
 // SetInferenceRouter sets the inference router for MAIA-managed inference.
-func (p *Proxy) SetInferenceRouter(router *inference.DefaultRouter) {
+func (p *Proxy) SetInferenceRouter(router inference.InferenceRouter) {
 	p.inferenceRouter = router
 }
 

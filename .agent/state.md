@@ -831,12 +831,243 @@ POST   /admin/tenants/:id/activate     # Activate tenant
 
 ---
 
+### SESSION 21 (2026-01-20) - Inference Integration Phase 1
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Created exploration plan for inference integration
+- [x] Designed inference architecture following embedding provider pattern
+- [x] Implemented `internal/inference/` package with Provider interface
+- [x] Implemented mock provider for testing
+- [x] Implemented router with wildcard pattern matching (llama*, gpt*, claude*, etc.)
+- [x] Implemented Ollama provider for local inference
+- [x] Implemented OpenRouter provider for cloud inference (100+ models)
+- [x] Added InferenceConfig to configuration with opt-in behavior
+- [x] Integrated inference router into proxy (automatic context injection/extraction preserved)
+- [x] Added inference initialization to server startup
+- [x] Added comprehensive tests for inference package (all tests pass)
+- [x] Overall build passes with all existing tests
+
+**Key Components Added**:
+
+- `internal/inference/inference.go` - Provider, Router, StreamReader interfaces and types
+- `internal/inference/factory.go` - Provider factory with type constants
+- `internal/inference/mock.go` - Mock provider for testing
+- `internal/inference/router.go` - Multi-provider routing with wildcard patterns
+- `internal/inference/providers/ollama/provider.go` - Ollama provider
+- `internal/inference/providers/openrouter/provider.go` - OpenRouter provider
+- `internal/inference/inference_test.go` - Mock provider and accumulator tests
+- `internal/inference/router_test.go` - Router and wildcard matching tests
+
+**Files Modified**:
+
+- `internal/config/config.go` - Added InferenceConfig, InferenceProviderConfig, etc.
+- `pkg/proxy/proxy.go` - Integrated inference router, added conversion functions
+- `internal/server/server.go` - Auto-initialization of inference and proxy
+
+**Configuration Example**:
+
+```yaml
+inference:
+  enabled: true  # Opt-in (default: false)
+  default_provider: "ollama"
+
+  providers:
+    ollama:
+      type: "ollama"
+      base_url: "http://localhost:11434/v1"
+      timeout: 60s
+
+    openrouter:
+      type: "openrouter"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key: "${OPENROUTER_API_KEY}"
+
+  routing:
+    model_mapping:
+      "llama*": "ollama"
+      "mistral*": "ollama"
+      "*": "openrouter"
+```
+
+**Features**:
+
+- Opt-in behavior (disabled by default)
+- Multi-provider routing based on model patterns
+- Automatic memory context injection (preserved from proxy)
+- Automatic memory extraction from responses (preserved from proxy)
+- Full streaming support
+- Single binary deployment maintained
+
+**Notes**:
+
+- All tests pass
+- Linter clean
+- Overall coverage: maintained at ~78%
+
+---
+
+### SESSION 22 (2026-01-20) - Inference Phase 2 Complete
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Added comprehensive tests for Anthropic provider (~90% coverage)
+  - NewProvider tests (valid config, missing API key)
+  - SupportsModel tests (default patterns, configured models, wildcards)
+  - ListModels tests (configured models, known models, closed provider)
+  - Complete tests (successful, with parameters, error cases)
+  - Stream tests (successful SSE streaming, error cases)
+  - Health tests (healthy, unhealthy, closed provider)
+  - Request/response conversion tests
+- [x] Added comprehensive tests for Ollama provider (~90% coverage)
+  - Similar test coverage to Anthropic provider
+  - OpenAI-compatible API endpoint tests
+- [x] Added comprehensive tests for OpenRouter provider (~90% coverage)
+  - API key authentication tests
+  - Custom headers tests (HTTP-Referer, X-Title)
+- [x] Added `/v1/inference/health` API endpoint for provider health status
+  - GET `/v1/inference/health` - Returns all providers' health status
+  - POST `/v1/inference/health/:name` - Triggers health check for specific provider
+- [x] Added handler tests for inference health endpoints
+- [x] Added failover integration tests (7 tests):
+  - TestRouter_Failover_MultipleProviders
+  - TestRouter_Failover_AllProvidersUnhealthy
+  - TestRouter_Failover_Recovery
+  - TestRouter_Failover_ExplicitProviderUnhealthy
+  - TestRouter_Failover_ModelNotSupportedByBackup
+  - TestRouter_Failover_WithUnknownHealthStatus
+  - TestRouter_Complete_WithFailover
+- [x] Fixed linter errcheck warnings in all provider test files
+
+**Key Components Added/Modified**:
+
+- `internal/inference/providers/anthropic/provider_test.go` - Comprehensive provider tests
+- `internal/inference/providers/ollama/provider_test.go` - Comprehensive provider tests
+- `internal/inference/providers/openrouter/provider_test.go` - Comprehensive provider tests
+- `internal/server/handlers.go` - Added InferenceHealthResponse, ProviderHealthDTO types and handlers
+- `internal/server/server.go` - Added inference health routes
+- `internal/server/handlers_test.go` - Added inference health tests and mock infrastructure
+- `internal/inference/router_test.go` - Added failover integration tests
+
+**API Endpoints Added**:
+```
+GET  /v1/inference/health         # Get all providers' health status
+POST /v1/inference/health/:name   # Trigger health check for specific provider
+```
+
+**Response Format**:
+```json
+{
+  "enabled": true,
+  "providers": {
+    "ollama": {
+      "status": "healthy",
+      "last_check": "2026-01-20T10:30:00Z",
+      "consecutive_errors": 0,
+      "consecutive_ok": 5
+    },
+    "openrouter": {
+      "status": "unhealthy",
+      "last_check": "2026-01-20T10:29:45Z",
+      "last_error": "connection refused",
+      "consecutive_errors": 3,
+      "consecutive_ok": 0
+    }
+  }
+}
+```
+
+**Notes**:
+
+- All tests pass
+- Linter clean (golangci-lint run passes)
+- Overall coverage: 75.5%
+
+---
+
+### SESSION 23 (2026-01-20) - Inference Phase 3: Response Caching
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Created `InferenceRouter` interface in `internal/inference/inference.go`
+  - Enables polymorphic use of both DefaultRouter and CachingRouter
+  - Defines Complete, Stream, RouteWithOptions, GetProvider, ListModels, GetHealthChecker methods
+- [x] Updated `pkg/proxy/proxy.go` to use `inference.InferenceRouter` interface
+- [x] Integrated CachingRouter into server initialization (`initInferenceRouter`)
+  - When `inference.cache.enabled` is true, wraps DefaultRouter with CachingRouter
+  - Configurable TTL and max entries
+  - Stores cache reference in Server for endpoint access
+- [x] Added cache statistics endpoint `GET /v1/inference/cache/stats`
+  - Returns hits, misses, evictions, size, last_access
+  - Returns `enabled: false` when cache is disabled
+- [x] Added cache clear endpoint `POST /v1/inference/cache/clear`
+  - Clears all cached responses
+  - Returns 404 with `CACHE_DISABLED` code when cache is disabled
+- [x] Added handler tests for cache endpoints (4 tests)
+- [x] Added CachingRouter integration tests (3 new tests)
+  - TestCachingRouter_DelegationMethods - verifies all delegation methods
+  - TestCachingRouter_RegisterProvider - verifies provider registration
+  - TestCachingRouter_CacheHitAfterClear - verifies cache behavior after clear
+
+**Key Components Added/Modified**:
+
+- `internal/inference/inference.go` - Added `InferenceRouter` interface
+- `pkg/proxy/proxy.go` - Changed `*inference.DefaultRouter` to `inference.InferenceRouter`
+- `internal/server/server.go` - Added `inferenceCache` field, updated `initInferenceRouter()` to wrap with CachingRouter
+- `internal/server/handlers.go` - Added `CacheStatsResponse` type, `getInferenceCacheStats`, `clearInferenceCache` handlers
+- `internal/server/handlers_test.go` - Added cache endpoint tests
+- `internal/inference/cache_test.go` - Added CachingRouter integration tests
+
+**API Endpoints Added**:
+```
+GET  /v1/inference/cache/stats   # Get cache statistics
+POST /v1/inference/cache/clear   # Clear all cached responses
+```
+
+**Cache Stats Response Format**:
+
+```json
+{
+  "enabled": true,
+  "hits": 150,
+  "misses": 45,
+  "evictions": 2,
+  "size": 48,
+  "last_access": "2026-01-20T17:30:00Z"
+}
+```
+
+**Configuration Example**:
+```yaml
+inference:
+  enabled: true
+  cache:
+    enabled: true
+    ttl: 24h
+    max_entries: 1000
+```
+
+**Notes**:
+
+- All tests pass
+- Linter clean (golangci-lint run passes)
+- Cache is LRU-based with TTL expiration
+- Streaming requests bypass cache (as designed)
+- Cache key is SHA256 hash of model, messages, temperature, top_p, max_tokens, stop, and user
+
+---
+
 ## Next Steps
 
-1. **Production Load Testing** - Test under production-like conditions with larger datasets
-2. **Performance Optimization** - Profile and optimize hot paths if needed
+1. **Inference Phase 4**: MCP tools for inference (`maia_complete`, `maia_stream`)
+2. **Production Load Testing** - Test under production-like conditions with larger datasets
 3. **Tenant-Aware Storage** - Implement prefix-based isolation per RFD 0004 Phase 2
-4. **Graph Index Examples** - Add examples for relationship-based retrieval
 
 ---
 

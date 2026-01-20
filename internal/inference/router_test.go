@@ -376,3 +376,254 @@ func TestRouter_GetHealthChecker(t *testing.T) {
 	retrieved := router.GetHealthChecker()
 	assert.Equal(t, hc, retrieved)
 }
+
+// Integration tests for failover scenarios
+
+func TestRouter_Failover_MultipleProviders(t *testing.T) {
+	cfg := RoutingConfig{
+		ModelMapping: map[string]string{
+			"test*": "primary",
+		},
+	}
+
+	healthCfg := HealthConfig{
+		Enabled:            false, // Disable background checks for predictable tests
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(cfg, "primary", WithHealthChecker(hc), WithFailover(true))
+
+	// Register three providers
+	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"})
+	backupProvider := NewMockProvider("backup").WithModels([]string{"test*"})
+	tertiaryProvider := NewMockProvider("tertiary").WithModels([]string{"test*"})
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
+	_ = router.RegisterProvider(tertiaryProvider)
+
+	// Initially routes to primary
+	provider, err := router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "primary", provider.Name())
+
+	// Mark primary as unhealthy
+	primaryProvider.WithError(ErrProviderClosed)
+	_ = hc.CheckNow(context.Background(), "primary")
+
+	// Should fail over to one of the backups
+	provider, err = router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Contains(t, []string{"backup", "tertiary"}, provider.Name())
+}
+
+func TestRouter_Failover_AllProvidersUnhealthy(t *testing.T) {
+	cfg := RoutingConfig{
+		ModelMapping: map[string]string{
+			"test*": "primary",
+		},
+	}
+
+	healthCfg := HealthConfig{
+		Enabled:            false,
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(cfg, "primary", WithHealthChecker(hc), WithFailover(true))
+
+	// Register two providers
+	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"})
+	backupProvider := NewMockProvider("backup").WithModels([]string{"test*"})
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
+
+	// Mark both as unhealthy
+	primaryProvider.WithError(ErrProviderClosed)
+	backupProvider.WithError(ErrProviderClosed)
+	_ = hc.CheckNow(context.Background(), "primary")
+	_ = hc.CheckNow(context.Background(), "backup")
+
+	// Should still return primary (graceful degradation)
+	provider, err := router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	// Returns a provider that supports the model even if unhealthy
+	assert.NotNil(t, provider)
+}
+
+func TestRouter_Failover_Recovery(t *testing.T) {
+	cfg := RoutingConfig{
+		ModelMapping: map[string]string{
+			"test*": "primary",
+		},
+	}
+
+	healthCfg := HealthConfig{
+		Enabled:            false,
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(cfg, "primary", WithHealthChecker(hc), WithFailover(true))
+
+	// Register providers
+	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"})
+	backupProvider := NewMockProvider("backup").WithModels([]string{"test*"})
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
+
+	// Initially routes to primary
+	provider, err := router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "primary", provider.Name())
+
+	// Mark primary as unhealthy
+	primaryProvider.WithError(ErrProviderClosed)
+	_ = hc.CheckNow(context.Background(), "primary")
+
+	// Should fail over to backup
+	provider, err = router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "backup", provider.Name())
+
+	// Recover primary
+	primaryProvider.WithError(nil)
+	_ = hc.CheckNow(context.Background(), "primary")
+
+	// Should route back to primary after recovery
+	provider, err = router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "primary", provider.Name())
+}
+
+func TestRouter_Failover_ExplicitProviderUnhealthy(t *testing.T) {
+	healthCfg := HealthConfig{
+		Enabled:            false,
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(RoutingConfig{}, "default", WithHealthChecker(hc), WithFailover(true))
+
+	// Register providers
+	explicitProvider := NewMockProvider("explicit")
+	defaultProvider := NewMockProvider("default")
+	_ = router.RegisterProvider(explicitProvider)
+	_ = router.RegisterProvider(defaultProvider)
+
+	// Mark explicit as unhealthy
+	explicitProvider.WithError(ErrProviderClosed)
+	_ = hc.CheckNow(context.Background(), "explicit")
+
+	// Explicit provider should return error when unhealthy
+	_, err := router.RouteWithOptions(context.Background(), "any-model", "explicit")
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrProviderUnhealthy)
+}
+
+func TestRouter_Failover_ModelNotSupportedByBackup(t *testing.T) {
+	cfg := RoutingConfig{
+		ModelMapping: map[string]string{
+			"special*": "primary",
+		},
+	}
+
+	healthCfg := HealthConfig{
+		Enabled:            false,
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(cfg, "primary", WithHealthChecker(hc), WithFailover(true))
+
+	// Primary supports special models, backup doesn't
+	primaryProvider := NewMockProvider("primary").WithModels([]string{"special*"})
+	backupProvider := NewMockProvider("backup").WithModels([]string{"general*"})
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
+
+	// Mark primary as unhealthy
+	primaryProvider.WithError(ErrProviderClosed)
+	_ = hc.CheckNow(context.Background(), "primary")
+
+	// Should still return primary (no compatible backup available)
+	provider, err := router.Route(context.Background(), "special-model")
+	require.NoError(t, err)
+	assert.Equal(t, "primary", provider.Name())
+}
+
+func TestRouter_Failover_WithUnknownHealthStatus(t *testing.T) {
+	cfg := RoutingConfig{
+		ModelMapping: map[string]string{
+			"test*": "primary",
+		},
+	}
+
+	healthCfg := HealthConfig{
+		Enabled:            false,
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(cfg, "primary", WithHealthChecker(hc), WithFailover(true))
+
+	// Register providers (health status is Unknown by default)
+	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"})
+	_ = router.RegisterProvider(primaryProvider)
+
+	// Unknown status should be treated as available
+	provider, err := router.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "primary", provider.Name())
+
+	health, _ := hc.GetHealth("primary")
+	assert.Equal(t, HealthStatusUnknown, health.Status)
+}
+
+func TestRouter_Complete_WithFailover(t *testing.T) {
+	cfg := RoutingConfig{
+		ModelMapping: map[string]string{
+			"test*": "primary",
+		},
+	}
+
+	healthCfg := HealthConfig{
+		Enabled:            false,
+		UnhealthyThreshold: 1,
+		HealthyThreshold:   1,
+	}
+	hc := NewHealthChecker(healthCfg)
+
+	router := NewRouter(cfg, "primary", WithHealthChecker(hc), WithFailover(true))
+
+	// Primary and backup
+	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"}).WithResponse("Primary response")
+	backupProvider := NewMockProvider("backup").WithModels([]string{"test*"}).WithResponse("Backup response")
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
+
+	req := &CompletionRequest{
+		Model:    "test-model",
+		Messages: []Message{{Role: "user", Content: "Hello"}},
+	}
+
+	// Should get primary response
+	resp, err := router.Complete(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "Primary response", resp.Choices[0].Message.Content)
+
+	// Mark primary as unhealthy
+	primaryProvider.WithError(ErrProviderClosed)
+	_ = hc.CheckNow(context.Background(), "primary")
+
+	// Should get backup response
+	resp, err = router.Complete(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "Backup response", resp.Choices[0].Message.Content)
+}

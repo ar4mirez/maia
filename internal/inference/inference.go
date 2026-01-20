@@ -69,6 +69,30 @@ type Router interface {
 	Close() error
 }
 
+// InferenceRouter is the full interface for inference routing with caching support.
+// This interface is implemented by both DefaultRouter and CachingRouter.
+type InferenceRouter interface {
+	Router
+
+	// Complete performs a non-streaming completion request.
+	Complete(ctx context.Context, req *CompletionRequest) (*CompletionResponse, error)
+
+	// Stream performs a streaming completion request.
+	Stream(ctx context.Context, req *CompletionRequest) (StreamReader, error)
+
+	// RouteWithOptions routes with an explicit provider override.
+	RouteWithOptions(ctx context.Context, modelID string, explicitProvider string) (Provider, error)
+
+	// GetProvider retrieves a provider by name.
+	GetProvider(name string) (Provider, bool)
+
+	// ListModels returns all available models across providers.
+	ListModels(ctx context.Context) ([]Model, error)
+
+	// GetHealthChecker returns the health checker instance.
+	GetHealthChecker() *HealthChecker
+}
+
 // CompletionRequest represents a chat completion request.
 type CompletionRequest struct {
 	Model       string    `json:"model"`

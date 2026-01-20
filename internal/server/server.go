@@ -38,7 +38,8 @@ type Server struct {
 	retriever       *retrieval.Retriever
 	assembler       *mcontext.Assembler
 	metrics         *metrics.Metrics
-	inferenceRouter *inference.DefaultRouter
+	inferenceRouter inference.InferenceRouter
+	inferenceCache  *inference.Cache
 	proxy           *proxy.Proxy
 }
 
@@ -48,7 +49,7 @@ type ServerDeps struct {
 	Assembler       *mcontext.Assembler
 	Analyzer        *query.Analyzer
 	TenantManager   tenant.Manager
-	InferenceRouter *inference.DefaultRouter
+	InferenceRouter inference.InferenceRouter
 }
 
 // New creates a new HTTP server.
@@ -111,7 +112,7 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 }
 
 // initInferenceRouter initializes the inference router based on configuration.
-func (s *Server) initInferenceRouter() *inference.DefaultRouter {
+func (s *Server) initInferenceRouter() inference.InferenceRouter {
 	routingCfg := inference.RoutingConfig{
 		ModelMapping: s.cfg.Inference.Routing.ModelMapping,
 	}
@@ -198,6 +199,32 @@ func (s *Server) initInferenceRouter() *inference.DefaultRouter {
 			zap.Duration("interval", healthCfg.Interval),
 			zap.Int("unhealthy_threshold", healthCfg.UnhealthyThreshold),
 		)
+	}
+
+	// Wrap with caching router if cache is enabled
+	if s.cfg.Inference.Cache.Enabled {
+		cacheCfg := inference.CacheConfig{
+			Enabled:    true,
+			TTL:        s.cfg.Inference.Cache.TTL,
+			Namespace:  s.cfg.Inference.Cache.Namespace,
+			MaxEntries: s.cfg.Inference.Cache.MaxEntries,
+		}
+		if cacheCfg.TTL == 0 {
+			cacheCfg.TTL = 24 * time.Hour
+		}
+		if cacheCfg.MaxEntries == 0 {
+			cacheCfg.MaxEntries = 1000
+		}
+
+		cache := inference.NewCache(cacheCfg)
+		s.inferenceCache = cache
+
+		s.logger.Info("inference caching enabled",
+			zap.Duration("ttl", cacheCfg.TTL),
+			zap.Int("max_entries", cacheCfg.MaxEntries),
+		)
+
+		return inference.NewCachingRouter(router, cache)
 	}
 
 	return router
@@ -389,6 +416,20 @@ func (s *Server) setupRoutes() {
 
 		// Stats
 		v1.GET("/stats", s.getStats)
+
+		// Inference health (available even if inference is disabled)
+		inferenceGroup := v1.Group("/inference")
+		{
+			inferenceGroup.GET("/health", s.getInferenceHealth)
+			inferenceGroup.POST("/health/:name", s.checkInferenceProviderHealth)
+
+			// Cache endpoints
+			cache := inferenceGroup.Group("/cache")
+			{
+				cache.GET("/stats", s.getInferenceCacheStats)
+				cache.POST("/clear", s.clearInferenceCache)
+			}
+		}
 	}
 
 	// Admin API (requires tenant manager)

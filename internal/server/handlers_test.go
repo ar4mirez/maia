@@ -17,6 +17,7 @@ import (
 
 	"github.com/ar4mirez/maia/internal/config"
 	mcontext "github.com/ar4mirez/maia/internal/context"
+	"github.com/ar4mirez/maia/internal/inference"
 	"github.com/ar4mirez/maia/internal/query"
 	"github.com/ar4mirez/maia/internal/storage"
 )
@@ -1160,5 +1161,308 @@ func TestPositionToString(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+// Inference Health Endpoint Tests
+
+// mockProvider implements inference.Provider for testing.
+type mockInferenceProvider struct {
+	name      string
+	healthy   bool
+	healthErr error
+}
+
+func (m *mockInferenceProvider) Complete(ctx context.Context, req *inference.CompletionRequest) (*inference.CompletionResponse, error) {
+	return &inference.CompletionResponse{ID: "test"}, nil
+}
+
+func (m *mockInferenceProvider) Stream(ctx context.Context, req *inference.CompletionRequest) (inference.StreamReader, error) {
+	return nil, nil
+}
+
+func (m *mockInferenceProvider) ListModels(ctx context.Context) ([]inference.Model, error) {
+	return []inference.Model{{ID: "test-model"}}, nil
+}
+
+func (m *mockInferenceProvider) Name() string {
+	return m.name
+}
+
+func (m *mockInferenceProvider) SupportsModel(modelID string) bool {
+	return true
+}
+
+func (m *mockInferenceProvider) Health(ctx context.Context) error {
+	if m.healthErr != nil {
+		return m.healthErr
+	}
+	if !m.healthy {
+		return fmt.Errorf("unhealthy")
+	}
+	return nil
+}
+
+func (m *mockInferenceProvider) Close() error {
+	return nil
+}
+
+// createTestRouter creates a test inference router without health checker.
+func createTestRouter() *inference.DefaultRouter {
+	router := inference.NewRouter(inference.RoutingConfig{}, "test-provider")
+	provider := &mockInferenceProvider{name: "test-provider", healthy: true}
+	_ = router.RegisterProvider(provider)
+	return router
+}
+
+// createTestRouterWithHealthChecker creates a test inference router with health checker.
+func createTestRouterWithHealthChecker() *inference.DefaultRouter {
+	router := inference.NewRouter(inference.RoutingConfig{}, "test-provider")
+	provider := &mockInferenceProvider{name: "test-provider", healthy: true}
+	_ = router.RegisterProvider(provider)
+
+	healthChecker := inference.NewHealthChecker(inference.HealthConfig{
+		Enabled:            true,
+		Interval:           1 * time.Hour, // Long interval to prevent automatic checks
+		Timeout:            10 * time.Second,
+		UnhealthyThreshold: 3,
+		HealthyThreshold:   1,
+	})
+	router.SetHealthChecker(healthChecker)
+	return router
+}
+
+func TestGetInferenceHealth_Disabled(t *testing.T) {
+	store := newMockStore()
+	srv := testServer(store) // No inference router
+
+	w := performRequest(srv.Router(), "GET", "/v1/inference/health", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp InferenceHealthResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.False(t, resp.Enabled)
+	assert.Nil(t, resp.Providers)
+}
+
+func TestGetInferenceHealth_EnabledNoHealthChecker(t *testing.T) {
+	store := newMockStore()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: createTestRouter(),
+	})
+
+	w := performRequest(srv.Router(), "GET", "/v1/inference/health", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp InferenceHealthResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Enabled)
+	assert.NotNil(t, resp.Providers)
+	assert.Contains(t, resp.Providers, "test-provider")
+	assert.Equal(t, "unknown", resp.Providers["test-provider"].Status)
+}
+
+func TestGetInferenceHealth_WithHealthChecker(t *testing.T) {
+	store := newMockStore()
+	router := createTestRouterWithHealthChecker()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: router,
+	})
+
+	w := performRequest(srv.Router(), "GET", "/v1/inference/health", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp InferenceHealthResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.True(t, resp.Enabled)
+	assert.NotNil(t, resp.Providers)
+}
+
+func TestCheckInferenceProviderHealth_NotEnabled(t *testing.T) {
+	store := newMockStore()
+	srv := testServer(store) // No inference router
+
+	w := performRequest(srv.Router(), "POST", "/v1/inference/health/test-provider", nil)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var resp ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "INFERENCE_DISABLED", resp.Code)
+}
+
+func TestCheckInferenceProviderHealth_ProviderNotFound(t *testing.T) {
+	store := newMockStore()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: createTestRouter(),
+	})
+
+	w := performRequest(srv.Router(), "POST", "/v1/inference/health/nonexistent", nil)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var resp ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "PROVIDER_NOT_FOUND", resp.Code)
+}
+
+func TestCheckInferenceProviderHealth_NoHealthChecker(t *testing.T) {
+	store := newMockStore()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: createTestRouter(),
+	})
+
+	w := performRequest(srv.Router(), "POST", "/v1/inference/health/test-provider", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ProviderHealthDTO
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "healthy", resp.Status)
+}
+
+func TestCheckInferenceProviderHealth_WithHealthChecker(t *testing.T) {
+	store := newMockStore()
+	router := createTestRouterWithHealthChecker()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: router,
+	})
+
+	w := performRequest(srv.Router(), "POST", "/v1/inference/health/test-provider", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp ProviderHealthDTO
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	// Status should be healthy since mock provider always returns nil from Health()
+	assert.Equal(t, "healthy", resp.Status)
+}
+
+// Cache endpoint tests
+
+func TestGetInferenceCacheStats_Disabled(t *testing.T) {
+	store := newMockStore()
+	srv := testServer(store) // No cache
+
+	w := performRequest(srv.Router(), "GET", "/v1/inference/cache/stats", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var resp CacheStatsResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.False(t, resp.Enabled)
+	assert.Equal(t, int64(0), resp.Hits)
+	assert.Equal(t, int64(0), resp.Misses)
+}
+
+func TestGetInferenceCacheStats_Enabled(t *testing.T) {
+	store := newMockStore()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: createTestRouter(),
+	})
+
+	// Set up cache on the server
+	cache := inference.NewCache(inference.CacheConfig{
+		Enabled:    true,
+		MaxEntries: 100,
+	})
+	srv.inferenceCache = cache
+
+	// Add some cache entries to generate stats
+	ctx := context.Background()
+	req := &inference.CompletionRequest{
+		Model:    "test-model",
+		Messages: []inference.Message{{Role: "user", Content: "Hello"}},
+	}
+	resp := &inference.CompletionResponse{
+		ID:      "test-id",
+		Choices: []inference.Choice{{Index: 0, Message: &inference.Message{Role: "assistant", Content: "Hi"}}},
+	}
+	cache.Set(ctx, req, resp)
+
+	// Trigger a cache hit
+	_ = cache.Get(ctx, req)
+
+	// Trigger a cache miss
+	missReq := &inference.CompletionRequest{
+		Model:    "test-model-2",
+		Messages: []inference.Message{{Role: "user", Content: "Different"}},
+	}
+	_ = cache.Get(ctx, missReq)
+
+	w := performRequest(srv.Router(), "GET", "/v1/inference/cache/stats", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var statsResp CacheStatsResponse
+	err := json.Unmarshal(w.Body.Bytes(), &statsResp)
+	require.NoError(t, err)
+	assert.True(t, statsResp.Enabled)
+	assert.Equal(t, int64(1), statsResp.Hits)
+	assert.Equal(t, int64(1), statsResp.Misses)
+	assert.Equal(t, 1, statsResp.Size)
+}
+
+func TestClearInferenceCache_Disabled(t *testing.T) {
+	store := newMockStore()
+	srv := testServer(store) // No cache
+
+	w := performRequest(srv.Router(), "POST", "/v1/inference/cache/clear", nil)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+
+	var resp ErrorResponse
+	err := json.Unmarshal(w.Body.Bytes(), &resp)
+	require.NoError(t, err)
+	assert.Equal(t, "CACHE_DISABLED", resp.Code)
+}
+
+func TestClearInferenceCache_Success(t *testing.T) {
+	store := newMockStore()
+	srv := testServerWithDeps(store, &ServerDeps{
+		InferenceRouter: createTestRouter(),
+	})
+
+	// Set up cache on the server
+	cache := inference.NewCache(inference.CacheConfig{
+		Enabled:    true,
+		MaxEntries: 100,
+	})
+	srv.inferenceCache = cache
+
+	// Add some cache entries
+	ctx := context.Background()
+	req := &inference.CompletionRequest{
+		Model:    "test-model",
+		Messages: []inference.Message{{Role: "user", Content: "Hello"}},
+	}
+	resp := &inference.CompletionResponse{
+		ID:      "test-id",
+		Choices: []inference.Choice{{Index: 0, Message: &inference.Message{Role: "assistant", Content: "Hi"}}},
+	}
+	cache.Set(ctx, req, resp)
+
+	// Verify cache has entries
+	stats := cache.Stats()
+	assert.Equal(t, 1, stats.Size)
+
+	// Clear the cache
+	w := performRequest(srv.Router(), "POST", "/v1/inference/cache/clear", nil)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Verify cache is empty
+	stats = cache.Stats()
+	assert.Equal(t, 0, stats.Size)
 }
 

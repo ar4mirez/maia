@@ -470,3 +470,130 @@ func TestCachingRouter_Stream(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, chunk)
 }
+
+func TestCachingRouter_DelegationMethods(t *testing.T) {
+	cfg := CacheConfig{
+		Enabled:    true,
+		TTL:        time.Hour,
+		MaxEntries: 100,
+	}
+	cache := NewCache(cfg)
+
+	router := NewRouter(RoutingConfig{}, "mock")
+	mockProvider := NewMockProvider("mock").WithResponse("Test response")
+	_ = router.RegisterProvider(mockProvider)
+
+	cachingRouter := NewCachingRouter(router, cache)
+
+	// Test Route
+	provider, err := cachingRouter.Route(context.Background(), "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "mock", provider.Name())
+
+	// Test RouteWithOptions
+	provider, err = cachingRouter.RouteWithOptions(context.Background(), "test-model", "mock")
+	require.NoError(t, err)
+	assert.Equal(t, "mock", provider.Name())
+
+	// Test GetProvider
+	provider, ok := cachingRouter.GetProvider("mock")
+	assert.True(t, ok)
+	assert.Equal(t, "mock", provider.Name())
+
+	// Test GetProvider for non-existent provider
+	_, ok = cachingRouter.GetProvider("nonexistent")
+	assert.False(t, ok)
+
+	// Test ListProviders
+	providers := cachingRouter.ListProviders()
+	assert.Len(t, providers, 1)
+	assert.Equal(t, "mock", providers[0].Name())
+
+	// Test ListModels
+	models, err := cachingRouter.ListModels(context.Background())
+	require.NoError(t, err)
+	assert.Len(t, models, 2) // MockProvider has 2 default models
+	assert.Equal(t, "mock-model-1", models[0].ID)
+	assert.Equal(t, "mock-model-2", models[1].ID)
+
+	// Test GetHealthChecker (nil by default)
+	healthChecker := cachingRouter.GetHealthChecker()
+	assert.Nil(t, healthChecker)
+
+	// Test Cache accessor
+	c := cachingRouter.Cache()
+	assert.Equal(t, cache, c)
+
+	// Test Close
+	err = cachingRouter.Close()
+	assert.NoError(t, err)
+}
+
+func TestCachingRouter_RegisterProvider(t *testing.T) {
+	cfg := CacheConfig{
+		Enabled:    true,
+		TTL:        time.Hour,
+		MaxEntries: 100,
+	}
+	cache := NewCache(cfg)
+
+	router := NewRouter(RoutingConfig{}, "mock")
+	cachingRouter := NewCachingRouter(router, cache)
+
+	// Register a provider through CachingRouter
+	mockProvider := NewMockProvider("test-provider").WithResponse("Test")
+	err := cachingRouter.RegisterProvider(mockProvider)
+	require.NoError(t, err)
+
+	// Verify it's registered
+	provider, ok := cachingRouter.GetProvider("test-provider")
+	assert.True(t, ok)
+	assert.Equal(t, "test-provider", provider.Name())
+}
+
+func TestCachingRouter_CacheHitAfterClear(t *testing.T) {
+	cfg := CacheConfig{
+		Enabled:    true,
+		TTL:        time.Hour,
+		MaxEntries: 100,
+	}
+	cache := NewCache(cfg)
+
+	router := NewRouter(RoutingConfig{}, "mock")
+	mockProvider := NewMockProvider("mock").WithResponse("Original response")
+	_ = router.RegisterProvider(mockProvider)
+
+	cachingRouter := NewCachingRouter(router, cache)
+
+	req := &CompletionRequest{
+		Model: "any-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	// First call - cache miss, stores response
+	resp1, err := cachingRouter.Complete(context.Background(), req)
+	require.NoError(t, err)
+	assert.Contains(t, resp1.Choices[0].Message.Content, "Original response")
+
+	// Verify cache hit
+	stats := cache.Stats()
+	assert.Equal(t, int64(1), stats.Misses)
+	assert.Equal(t, int64(0), stats.Hits)
+
+	// Clear cache
+	cache.Clear(context.Background())
+
+	// Change provider response
+	mockProvider.WithResponse("New response after clear")
+
+	// Next call should miss cache and get new response
+	resp2, err := cachingRouter.Complete(context.Background(), req)
+	require.NoError(t, err)
+	assert.Contains(t, resp2.Choices[0].Message.Content, "New response after clear")
+
+	// Verify stats after clear
+	stats = cache.Stats()
+	assert.Equal(t, int64(2), stats.Misses) // Two misses now
+}
