@@ -1582,3 +1582,299 @@ func TestStore_DeleteMemory_AfterUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, memories, 0)
 }
+
+func TestStore_UpdateMemory_WithMetadata(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a memory without metadata
+	input := &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Original content",
+	}
+	created, err := store.CreateMemory(ctx, input)
+	require.NoError(t, err)
+	assert.Nil(t, created.Metadata)
+
+	// Update with metadata
+	newMetadata := map[string]interface{}{
+		"category": "test",
+		"priority": float64(1), // Use float64 since JSON serialization converts ints to float64
+	}
+	updateInput := &storage.UpdateMemoryInput{
+		Metadata: newMetadata,
+	}
+
+	updated, err := store.UpdateMemory(ctx, created.ID, updateInput)
+	require.NoError(t, err)
+	assert.Equal(t, "test", updated.Metadata["category"])
+	assert.Equal(t, float64(1), updated.Metadata["priority"])
+
+	// Verify persistence (retrieved from store goes through JSON unmarshal)
+	retrieved, err := store.GetMemory(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "test", retrieved.Metadata["category"])
+	assert.Equal(t, float64(1), retrieved.Metadata["priority"])
+}
+
+func TestStore_UpdateMemory_WithRelations(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a memory without relations
+	input := &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Original content",
+	}
+	created, err := store.CreateMemory(ctx, input)
+	require.NoError(t, err)
+	assert.Nil(t, created.Relations)
+
+	// Update with relations
+	newRelations := []storage.Relation{
+		{
+			TargetID: "related-memory-1",
+			Type:     storage.RelationTypeRelatedTo,
+			Weight:   0.8,
+		},
+		{
+			TargetID: "related-memory-2",
+			Type:     storage.RelationTypeSupersedes,
+			Weight:   1.0,
+		},
+	}
+	updateInput := &storage.UpdateMemoryInput{
+		Relations: newRelations,
+	}
+
+	updated, err := store.UpdateMemory(ctx, created.ID, updateInput)
+	require.NoError(t, err)
+	assert.Len(t, updated.Relations, 2)
+	assert.Equal(t, "related-memory-1", updated.Relations[0].TargetID)
+	assert.Equal(t, storage.RelationTypeRelatedTo, updated.Relations[0].Type)
+
+	// Verify persistence
+	retrieved, err := store.GetMemory(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Len(t, retrieved.Relations, 2)
+}
+
+// testLogger implements badger.Logger interface for testing
+type testLogger struct{}
+
+func (l testLogger) Errorf(f string, args ...interface{})   {}
+func (l testLogger) Warningf(f string, args ...interface{}) {}
+func (l testLogger) Infof(f string, args ...interface{})    {}
+func (l testLogger) Debugf(f string, args ...interface{})   {}
+
+func TestStore_New_WithLogger(t *testing.T) {
+	dir, err := os.MkdirTemp("", "maia-test-logger-*")
+	require.NoError(t, err)
+	defer os.RemoveAll(dir)
+
+	store, err := New(&Options{
+		DataDir: dir,
+		Logger:  testLogger{},
+	})
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Verify store works with custom logger
+	ctx := context.Background()
+	_, err = store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: "test",
+		Content:   "Logger test",
+	})
+	require.NoError(t, err)
+}
+
+func TestStore_SearchMemories_TagNotFound(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-tag-notfound"
+
+	// Create a memory with specific tags
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Memory with tags",
+		Tags:      []string{"tag-a", "tag-b"},
+	})
+	require.NoError(t, err)
+
+	// Search for a tag that doesn't exist
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		Tags:      []string{"nonexistent-tag"},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 0) // Should not find the memory
+}
+
+func TestStore_SearchMemories_TypeNotMatching(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-type-notmatch"
+
+	// Create a semantic memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Semantic memory",
+		Type:      storage.MemoryTypeSemantic,
+	})
+	require.NoError(t, err)
+
+	// Search for working type (which doesn't match)
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		Types:     []storage.MemoryType{storage.MemoryTypeWorking},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 0) // Should not find the memory
+}
+
+func TestStore_SearchMemories_MultipleTagsRequired(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-multi-tags"
+
+	// Create memory with only one tag
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Memory with one tag",
+		Tags:      []string{"tag-a"},
+	})
+	require.NoError(t, err)
+
+	// Create memory with both tags
+	_, err = store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Memory with both tags",
+		Tags:      []string{"tag-a", "tag-b"},
+	})
+	require.NoError(t, err)
+
+	// Search requiring both tags
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		Tags:      []string{"tag-a", "tag-b"},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1) // Only the memory with both tags should match
+	assert.Contains(t, results[0].Memory.Content, "both tags")
+}
+
+func TestStore_SearchMemories_TimeRange_OnlyStart(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-timerange-start"
+
+	// Create a memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Recent memory",
+	})
+	require.NoError(t, err)
+
+	// Search with only start time (no end)
+	now := time.Now()
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		TimeRange: &storage.TimeRange{
+			Start: now.Add(-1 * time.Hour),
+			// End is zero (not set)
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+}
+
+func TestStore_SearchMemories_TimeRange_OnlyEnd(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-timerange-end"
+
+	// Create a memory
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Recent memory",
+	})
+	require.NoError(t, err)
+
+	// Search with only end time (no start)
+	now := time.Now()
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		TimeRange: &storage.TimeRange{
+			// Start is zero (not set)
+			End: now.Add(1 * time.Hour),
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 1)
+}
+
+func TestStore_SearchMemories_TimeRange_ExcludeByStart(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-timerange-exclude-start"
+
+	// Create a memory now
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Memory created now",
+	})
+	require.NoError(t, err)
+
+	// Search with start time in the future (should exclude the memory)
+	future := time.Now().Add(1 * time.Hour)
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		TimeRange: &storage.TimeRange{
+			Start: future,
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 0) // Memory was created before the start time
+}
+
+func TestStore_SearchMemories_TimeRange_ExcludeByEnd(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-timerange-exclude-end"
+
+	// Create a memory now
+	_, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace: namespace,
+		Content:   "Memory created now",
+	})
+	require.NoError(t, err)
+
+	// Search with end time in the past (should exclude the memory)
+	past := time.Now().Add(-1 * time.Hour)
+	results, err := store.SearchMemories(ctx, &storage.SearchOptions{
+		Namespace: namespace,
+		TimeRange: &storage.TimeRange{
+			End: past,
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, results, 0) // Memory was created after the end time
+}

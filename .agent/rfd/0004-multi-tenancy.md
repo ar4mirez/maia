@@ -2,9 +2,10 @@
 
 ## Status
 
-**State**: Discussion
+**State**: Accepted
 **Created**: 2026-01-19
 **Last Updated**: 2026-01-19
+**Approved**: 2026-01-19
 **Author**: MAIA Team
 
 ## Summary
