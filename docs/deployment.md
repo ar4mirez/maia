@@ -97,7 +97,7 @@ docker run -d \
   -p 8080:8080 \
   -v maia-data:/data \
   -e MAIA_LOG_LEVEL=info \
-  ghcr.io/cuemby/maia:latest
+  ghcr.io/ar4mirez/maia:latest
 
 # With authentication
 docker run -d \
@@ -106,7 +106,7 @@ docker run -d \
   -v maia-data:/data \
   -e MAIA_API_KEY=your-secure-key \
   -e MAIA_LOG_LEVEL=info \
-  ghcr.io/cuemby/maia:latest
+  ghcr.io/ar4mirez/maia:latest
 ```
 
 ### Building Custom Image
@@ -162,7 +162,7 @@ healthcheck:
 # docker-compose.yaml
 services:
   maia:
-    image: ghcr.io/cuemby/maia:latest
+    image: ghcr.io/ar4mirez/maia:latest
     ports:
       - "8080:8080"
     volumes:
@@ -187,7 +187,7 @@ volumes:
 # docker-compose.yaml
 services:
   maia:
-    image: ghcr.io/cuemby/maia:latest
+    image: ghcr.io/ar4mirez/maia:latest
     ports:
       - "8080:8080"
     volumes:
@@ -285,7 +285,7 @@ spec:
     spec:
       containers:
         - name: maia
-          image: ghcr.io/cuemby/maia:latest
+          image: ghcr.io/ar4mirez/maia:latest
           ports:
             - containerPort: 8080
               name: http
@@ -472,7 +472,7 @@ configMapGenerator:
       - config.yaml
 
 images:
-  - name: ghcr.io/cuemby/maia
+  - name: ghcr.io/ar4mirez/maia
     newTag: v1.0.0
 ```
 

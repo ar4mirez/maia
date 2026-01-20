@@ -8,7 +8,7 @@ MAIA provides official SDKs for Go, TypeScript, and Python. All SDKs share a con
 
 | SDK | Package | Language Version | Features |
 |-----|---------|------------------|----------|
-| Go | `github.com/cuemby/maia/pkg/maia` | Go 1.22+ | Full API, type-safe |
+| Go | `github.com/ar4mirez/maia/pkg/maia` | Go 1.22+ | Full API, type-safe |
 | TypeScript | `@maia/sdk` | Node 18+, browsers | Async/Promise, type definitions |
 | Python | `maia-sdk` | Python 3.9+ | Sync + async, Pydantic models |
 
@@ -19,7 +19,7 @@ MAIA provides official SDKs for Go, TypeScript, and Python. All SDKs share a con
 ### Installation
 
 ```bash
-go get github.com/cuemby/maia/pkg/maia
+go get github.com/ar4mirez/maia/pkg/maia
 ```
 
 ### Quick Start
@@ -32,7 +32,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/cuemby/maia/pkg/maia"
+    "github.com/ar4mirez/maia/pkg/maia"
 )
 
 func main() {

@@ -7,8 +7,8 @@ site_description: >-
   for LLM context management
 
 # Repository
-repo_name: cuemby/maia
-repo_url: https://github.com/cuemby/maia
+repo_name: ar4mirez/maia
+repo_url: https://github.com/ar4mirez/maia
 edit_uri: edit/main/docs/
 
 # Copyright
@@ -85,7 +85,7 @@ extra:
     deprecated: Deprecated
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/cuemby/maia
+      link: https://github.com/ar4mirez/maia
   generator: false
 
 # Extensions
@@ -116,7 +116,7 @@ markdown_extensions:
   - pymdownx.magiclink:
       normalize_issue_symbols: true
       repo_url_shorthand: true
-      user: cuemby
+      user: ar4mirez
       repo: maia
   - pymdownx.mark
   - pymdownx.smartsymbols

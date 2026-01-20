@@ -132,13 +132,13 @@ Choose the integration pattern that fits your use case:
 === "Docker"
 
     ```bash
-    docker run -d -p 8080:8080 -v maia-data:/data ghcr.io/cuemby/maia:latest
+    docker run -d -p 8080:8080 -v maia-data:/data ghcr.io/ar4mirez/maia:latest
     ```
 
 === "From Source"
 
     ```bash
-    git clone https://github.com/cuemby/maia
+    git clone https://github.com/ar4mirez/maia
     cd maia
     go build -o maia ./cmd/maia
     ./maia
@@ -272,11 +272,11 @@ MAIA is designed for production workloads with strict latency requirements:
 
 ## Community & Support
 
-- **GitHub Issues**: [github.com/cuemby/maia/issues](https://github.com/cuemby/maia/issues)
-- **Discussions**: [github.com/cuemby/maia/discussions](https://github.com/cuemby/maia/discussions)
+- **GitHub Issues**: [github.com/ar4mirez/maia/issues](https://github.com/ar4mirez/maia/issues)
+- **Discussions**: [github.com/ar4mirez/maia/discussions](https://github.com/ar4mirez/maia/discussions)
 
 ---
 
 ## License
 
-MAIA is released under the [Apache 2.0 License](https://github.com/cuemby/maia/blob/main/LICENSE).
+MAIA is released under the [Apache 2.0 License](https://github.com/ar4mirez/maia/blob/main/LICENSE).

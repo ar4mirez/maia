@@ -24,7 +24,7 @@ docker run -d \
   --name maia \
   -p 8080:8080 \
   -v maia-data:/data \
-  ghcr.io/cuemby/maia:latest
+  ghcr.io/ar4mirez/maia:latest
 
 # Verify it's running
 curl http://localhost:8080/health
@@ -35,7 +35,7 @@ curl http://localhost:8080/health
 
 ```bash
 # Clone the repository
-git clone https://github.com/cuemby/maia
+git clone https://github.com/ar4mirez/maia
 cd maia
 
 # Build the server
@@ -52,8 +52,8 @@ go build -o maiactl ./cmd/maiactl
 
 ```bash
 # Install server and CLI
-go install github.com/cuemby/maia/cmd/maia@latest
-go install github.com/cuemby/maia/cmd/maiactl@latest
+go install github.com/ar4mirez/maia/cmd/maia@latest
+go install github.com/ar4mirez/maia/cmd/maiactl@latest
 
 # Run
 maia
@@ -284,7 +284,7 @@ package main
 import (
     "context"
     "fmt"
-    "github.com/cuemby/maia/pkg/maia"
+    "github.com/ar4mirez/maia/pkg/maia"
 )
 
 func main() {
@@ -451,5 +451,5 @@ curl http://localhost:8080/health
 
 ## Getting Help
 
-- **GitHub Issues**: [Report bugs or request features](https://github.com/cuemby/maia/issues)
-- **Discussions**: [Ask questions and share ideas](https://github.com/cuemby/maia/discussions)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/ar4mirez/maia/issues)
+- **Discussions**: [Ask questions and share ideas](https://github.com/ar4mirez/maia/discussions)

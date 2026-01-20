@@ -10,7 +10,7 @@
 
 ```bash
 # Download the latest release
-curl -LO https://github.com/cuemby/maia/releases/latest/download/maiactl-$(uname -s)-$(uname -m)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maiactl-$(uname -s)-$(uname -m)
 chmod +x maiactl-*
 sudo mv maiactl-* /usr/local/bin/maiactl
 ```
@@ -18,7 +18,7 @@ sudo mv maiactl-* /usr/local/bin/maiactl
 ### From Source
 
 ```bash
-go install github.com/cuemby/maia/cmd/maiactl@latest
+go install github.com/ar4mirez/maia/cmd/maiactl@latest
 ```
 
 ### Verify Installation

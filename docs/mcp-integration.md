@@ -519,7 +519,7 @@ package main
 
 import (
     "os"
-    "github.com/cuemby/maia/pkg/mcp"
+    "github.com/ar4mirez/maia/pkg/mcp"
 )
 
 func main() {
