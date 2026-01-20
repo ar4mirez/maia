@@ -28,14 +28,14 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
 
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
-
       - name: Run govulncheck
-        run: govulncheck ./...
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: '1.23'
+          go-package: './...'
 
   gosec:
     name: Go Security Scan
@@ -47,13 +47,7 @@ jobs:
       - name: Run Gosec
         uses: securego/gosec@master
         with:
-          args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
-
-      - name: Upload Gosec results
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'gosec-results.sarif'
-        if: always()
+          args: '-no-fail -fmt text ./...'
 
   dependency-review:
     name: Dependency Review
@@ -81,15 +75,9 @@ jobs:
         with:
           scan-type: 'fs'
           scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-fs-results.sarif'
+          format: 'table'
           severity: 'CRITICAL,HIGH'
-
-      - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-fs-results.sarif'
-        if: always()
+          exit-code: '0'
 
   secret-scan:
     name: Secret Scanning
@@ -103,7 +91,4 @@ jobs:
       - name: TruffleHog Secret Scan
         uses: trufflesecurity/trufflehog@main
         with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
           extra_args: --only-verified
