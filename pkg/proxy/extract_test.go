@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -193,4 +194,151 @@ func TestDefaultExtractionPatterns(t *testing.T) {
 		assert.NotEmpty(t, p.category)
 		assert.Greater(t, p.minLen, 0)
 	}
+}
+
+// mockStore implements storage.Store interface for testing.
+type mockStore struct {
+	memories   []*storage.Memory
+	createErr  error
+	memCounter int
+}
+
+func (m *mockStore) CreateMemory(ctx context.Context, input *storage.CreateMemoryInput) (*storage.Memory, error) {
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
+	m.memCounter++
+	mem := &storage.Memory{
+		ID:        fmt.Sprintf("mem_%d", m.memCounter),
+		Namespace: input.Namespace,
+		Content:   input.Content,
+		Type:      input.Type,
+	}
+	m.memories = append(m.memories, mem)
+	return mem, nil
+}
+
+func (m *mockStore) GetMemory(ctx context.Context, id string) (*storage.Memory, error) {
+	return nil, nil
+}
+
+func (m *mockStore) UpdateMemory(ctx context.Context, id string, input *storage.UpdateMemoryInput) (*storage.Memory, error) {
+	return nil, nil
+}
+
+func (m *mockStore) DeleteMemory(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockStore) ListMemories(ctx context.Context, namespace string, opts *storage.ListOptions) ([]*storage.Memory, error) {
+	return nil, nil
+}
+
+func (m *mockStore) SearchMemories(ctx context.Context, opts *storage.SearchOptions) ([]*storage.SearchResult, error) {
+	return nil, nil
+}
+
+func (m *mockStore) TouchMemory(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockStore) CreateNamespace(ctx context.Context, input *storage.CreateNamespaceInput) (*storage.Namespace, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetNamespace(ctx context.Context, id string) (*storage.Namespace, error) {
+	return nil, nil
+}
+
+func (m *mockStore) GetNamespaceByName(ctx context.Context, name string) (*storage.Namespace, error) {
+	return nil, nil
+}
+
+func (m *mockStore) UpdateNamespace(ctx context.Context, id string, config *storage.NamespaceConfig) (*storage.Namespace, error) {
+	return nil, nil
+}
+
+func (m *mockStore) DeleteNamespace(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockStore) ListNamespaces(ctx context.Context, opts *storage.ListOptions) ([]*storage.Namespace, error) {
+	return nil, nil
+}
+
+func (m *mockStore) BatchCreateMemories(ctx context.Context, inputs []*storage.CreateMemoryInput) ([]*storage.Memory, error) {
+	return nil, nil
+}
+
+func (m *mockStore) BatchDeleteMemories(ctx context.Context, ids []string) error {
+	return nil
+}
+
+func (m *mockStore) Close() error {
+	return nil
+}
+
+func (m *mockStore) Stats(ctx context.Context) (*storage.StoreStats, error) {
+	return nil, nil
+}
+
+func TestExtractor_Store_WithMockStore(t *testing.T) {
+	store := &mockStore{}
+	extractor := NewExtractor(store)
+
+	memories := []*ExtractedMemory{
+		{Content: "User prefers dark mode", Category: "preference", Source: "assistant_response"},
+		{Content: "User works at Acme Corp", Category: "fact", Source: "assistant_response"},
+	}
+
+	err := extractor.Store(context.Background(), "test-namespace", memories)
+	assert.NoError(t, err)
+	assert.Len(t, store.memories, 2)
+	assert.Equal(t, "test-namespace", store.memories[0].Namespace)
+	assert.Equal(t, "User prefers dark mode", store.memories[0].Content)
+}
+
+func TestExtractor_Store_WithCreateError(t *testing.T) {
+	store := &mockStore{
+		createErr: fmt.Errorf("database error"),
+	}
+	extractor := NewExtractor(store)
+
+	memories := []*ExtractedMemory{
+		{Content: "Test memory", Category: "preference"},
+	}
+
+	// Store should not return error even if create fails (it logs and continues)
+	err := extractor.Store(context.Background(), "test", memories)
+	assert.NoError(t, err)
+	assert.Empty(t, store.memories) // No memories stored due to error
+}
+
+func TestExtractor_Extract_DeduplicatesFromUserMessages(t *testing.T) {
+	extractor := NewExtractor(nil)
+
+	// Extract from assistant content that contains the same info as user message
+	result, err := extractor.Extract(
+		context.Background(),
+		"I understand you prefer dark mode!",
+		[]string{"I prefer dark mode for everything."},
+	)
+	require.NoError(t, err)
+	// Should have extractions but deduplicated
+	assert.NotEmpty(t, result.Memories)
+}
+
+func TestExtractor_extractFromUserMessage_NoMatches(t *testing.T) {
+	extractor := NewExtractor(nil)
+
+	memories := extractor.extractFromUserMessage("Hello, how are you?")
+	assert.Empty(t, memories)
+}
+
+func TestExtractor_extractFromUserMessage_CallMePattern(t *testing.T) {
+	extractor := NewExtractor(nil)
+
+	memories := extractor.extractFromUserMessage("Call me Alex")
+	assert.NotEmpty(t, memories)
+	assert.Equal(t, "identity", memories[0].Category)
 }

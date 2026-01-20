@@ -491,11 +491,47 @@ async with AsyncMAIAClient() as client:
 
 ---
 
+### SESSION 13 (2026-01-19) - Proxy Test Coverage Improvement
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+- [x] Added tests for handleBackendError with context timeout/canceled errors
+- [x] Added tests for extractAndStoreMemories function (direct calls)
+- [x] Added tests for extractAndStoreMemoriesFromAccumulator function
+- [x] Added tests for Extractor.Store with mock store
+- [x] Added mock store implementation in proxy_test.go for memory extraction testing
+- [x] Proxy package coverage improved from 76.1% to 85.0%
+- [x] Overall coverage improved from 74.7% to 75.8%
+
+**Key Improvements**:
+
+| Package | Before | After | Target |
+|---------|--------|-------|--------|
+| pkg/proxy | 76.1% | 85.0% | 80% ✅ |
+| **Overall** | 74.7% | 75.8% | 70% ✅ |
+
+**Function Coverage Improvements**:
+
+| Function | Before | After |
+|----------|--------|-------|
+| extractAndStoreMemories | 0.0% | 80.0% |
+| extractAndStoreMemoriesFromAccumulator | 0.0% | 80.0% |
+| handleBackendError | 37.5% | 100.0% |
+| Extractor.Store | 25.0% | 100.0% |
+
+**Notes**:
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- All coverage targets met
+
+---
+
 ## Next Steps
 
 1. **Performance Testing** - Load testing under realistic conditions
 2. **Multi-tenancy** - Enhance for multi-tenant deployments
-3. **Proxy coverage** - Improve to 80% target
+3. **Graph Index Implementation** - Add relationship-based memory retrieval
 
 ---
 

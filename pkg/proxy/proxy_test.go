@@ -2,9 +2,12 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+
+	"github.com/ar4mirez/maia/internal/storage"
 )
 
 func init() {
@@ -366,4 +371,381 @@ func TestProxy_HeaderConstants(t *testing.T) {
 	assert.Equal(t, "X-MAIA-Skip-Memory", HeaderSkipMemory)
 	assert.Equal(t, "X-MAIA-Skip-Extract", HeaderSkipExtract)
 	assert.Equal(t, "X-MAIA-Token-Budget", HeaderTokenBudget)
+}
+
+func TestProxy_handleBackendError_ContextDeadlineExceeded(t *testing.T) {
+	proxy := setupTestProxy("http://localhost:8080")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	// Test context deadline exceeded error
+	err := fmt.Errorf("something failed: context deadline exceeded")
+	proxy.handleBackendError(c, err)
+
+	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
+
+	var errResp ErrorResponse
+	unmarshalErr := json.Unmarshal(w.Body.Bytes(), &errResp)
+	require.NoError(t, unmarshalErr)
+	assert.Equal(t, "timeout", errResp.Error.Type)
+	assert.Contains(t, errResp.Error.Message, "timed out")
+}
+
+func TestProxy_handleBackendError_ContextCanceled(t *testing.T) {
+	proxy := setupTestProxy("http://localhost:8080")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	// Test context canceled error
+	err := fmt.Errorf("request failed: context canceled")
+	proxy.handleBackendError(c, err)
+
+	assert.Equal(t, http.StatusGatewayTimeout, w.Code)
+}
+
+func TestProxy_handleBackendError_BackendError(t *testing.T) {
+	proxy := setupTestProxy("http://localhost:8080")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	// Test BackendError
+	err := &BackendError{
+		StatusCode: http.StatusUnauthorized,
+		Type:       "invalid_api_key",
+		Message:    "Invalid API key provided",
+	}
+	proxy.handleBackendError(c, err)
+
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+
+	var errResp ErrorResponse
+	unmarshalErr := json.Unmarshal(w.Body.Bytes(), &errResp)
+	require.NoError(t, unmarshalErr)
+	assert.Equal(t, "invalid_api_key", errResp.Error.Type)
+	assert.Equal(t, "Invalid API key provided", errResp.Error.Message)
+}
+
+func TestProxy_handleBackendError_GenericError(t *testing.T) {
+	proxy := setupTestProxy("http://localhost:8080")
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	// Test generic error
+	err := fmt.Errorf("connection refused")
+	proxy.handleBackendError(c, err)
+
+	assert.Equal(t, http.StatusBadGateway, w.Code)
+
+	var errResp ErrorResponse
+	unmarshalErr := json.Unmarshal(w.Body.Bytes(), &errResp)
+	require.NoError(t, unmarshalErr)
+	assert.Equal(t, "backend_error", errResp.Error.Type)
+	assert.Contains(t, errResp.Error.Message, "connection refused")
+}
+
+func TestProxy_handleListModels_BackendError(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(ErrorResponse{
+			Error: &APIError{
+				Message: "Internal server error",
+				Type:    "server_error",
+			},
+		})
+	}))
+	defer backend.Close()
+
+	proxy := setupTestProxy(backend.URL)
+	router := gin.New()
+	proxy.RegisterRoutes(router)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestNewProxy_WithAllDependencies(t *testing.T) {
+	// Create proxy with all dependencies set
+	proxy := NewProxy(&ProxyConfig{
+		Backend:          "http://localhost:8080",
+		AutoRemember:     true,
+		AutoContext:      true,
+		ContextPosition:  PositionSystem,
+		TokenBudget:      4000,
+		DefaultNamespace: "test-namespace",
+		Timeout:          10 * time.Second,
+	}, &ProxyDeps{
+		Logger: zap.NewNop(),
+		// Note: Store, Retriever, Assembler are nil for this test
+	})
+
+	assert.NotNil(t, proxy)
+	assert.Equal(t, "test-namespace", proxy.defaultNamespace)
+	assert.Equal(t, 4000, proxy.defaultBudget)
+}
+
+func TestNewProxy_WithNilLogger(t *testing.T) {
+	// Create proxy without logger - should use nop logger
+	proxy := NewProxy(&ProxyConfig{
+		Backend: "http://localhost:8080",
+	}, &ProxyDeps{
+		Logger: nil,
+	})
+
+	assert.NotNil(t, proxy)
+	assert.NotNil(t, proxy.logger)
+}
+
+// mockProxyStore implements storage.Store for testing proxy memory extraction.
+type mockProxyStore struct {
+	memories   []*mockMemory
+	createErr  error
+	memCounter int
+	mu         sync.Mutex
+}
+
+type mockMemory struct {
+	ID        string
+	Namespace string
+	Content   string
+}
+
+func newMockProxyStore() *mockProxyStore {
+	return &mockProxyStore{
+		memories: make([]*mockMemory, 0),
+	}
+}
+
+func (m *mockProxyStore) CreateMemory(_ context.Context, input *storage.CreateMemoryInput) (*storage.Memory, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
+	m.memCounter++
+	mem := &mockMemory{
+		ID:        fmt.Sprintf("mem_%d", m.memCounter),
+		Namespace: input.Namespace,
+		Content:   input.Content,
+	}
+	m.memories = append(m.memories, mem)
+	return &storage.Memory{
+		ID:        mem.ID,
+		Namespace: input.Namespace,
+		Content:   input.Content,
+	}, nil
+}
+
+func (m *mockProxyStore) GetMemory(_ context.Context, _ string) (*storage.Memory, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) UpdateMemory(_ context.Context, _ string, _ *storage.UpdateMemoryInput) (*storage.Memory, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) DeleteMemory(_ context.Context, _ string) error { return nil }
+func (m *mockProxyStore) ListMemories(_ context.Context, _ string, _ *storage.ListOptions) ([]*storage.Memory, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) SearchMemories(_ context.Context, _ *storage.SearchOptions) ([]*storage.SearchResult, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) TouchMemory(_ context.Context, _ string) error { return nil }
+func (m *mockProxyStore) CreateNamespace(_ context.Context, _ *storage.CreateNamespaceInput) (*storage.Namespace, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) GetNamespace(_ context.Context, _ string) (*storage.Namespace, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) GetNamespaceByName(_ context.Context, _ string) (*storage.Namespace, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) UpdateNamespace(_ context.Context, _ string, _ *storage.NamespaceConfig) (*storage.Namespace, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) DeleteNamespace(_ context.Context, _ string) error { return nil }
+func (m *mockProxyStore) ListNamespaces(_ context.Context, _ *storage.ListOptions) ([]*storage.Namespace, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) BatchCreateMemories(_ context.Context, _ []*storage.CreateMemoryInput) ([]*storage.Memory, error) {
+	return nil, nil
+}
+func (m *mockProxyStore) BatchDeleteMemories(_ context.Context, _ []string) error { return nil }
+func (m *mockProxyStore) Close() error                                            { return nil }
+func (m *mockProxyStore) Stats(_ context.Context) (*storage.StoreStats, error)    { return nil, nil }
+
+func TestProxy_extractAndStoreMemories_Direct(t *testing.T) {
+	store := newMockProxyStore()
+
+	proxy := NewProxy(&ProxyConfig{
+		Backend:          "http://localhost:8080",
+		AutoRemember:     true,
+		DefaultNamespace: "test",
+	}, &ProxyDeps{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	messages := []ChatMessage{
+		{Role: "user", Content: "I prefer dark mode for my IDE."},
+	}
+
+	resp := &ChatCompletionResponse{
+		Choices: []Choice{
+			{
+				Index: 0,
+				Message: &ChatMessage{
+					Role:    "assistant",
+					Content: "I understand you prefer dark mode for your IDE. I'll remember that preference.",
+				},
+			},
+		},
+	}
+
+	// Call extractAndStoreMemories directly
+	proxy.extractAndStoreMemories("test-ns", messages, resp)
+
+	// Wait a bit for processing
+	time.Sleep(50 * time.Millisecond)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	// Should have extracted at least one memory
+	assert.NotEmpty(t, store.memories)
+}
+
+func TestProxy_extractAndStoreMemories_EmptyResponse(t *testing.T) {
+	store := newMockProxyStore()
+
+	proxy := NewProxy(&ProxyConfig{
+		Backend:          "http://localhost:8080",
+		AutoRemember:     true,
+		DefaultNamespace: "test",
+	}, &ProxyDeps{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	messages := []ChatMessage{
+		{Role: "user", Content: "Hello"},
+	}
+
+	// Response with no choices
+	resp := &ChatCompletionResponse{
+		Choices: []Choice{},
+	}
+
+	proxy.extractAndStoreMemories("test-ns", messages, resp)
+
+	time.Sleep(50 * time.Millisecond)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	assert.Empty(t, store.memories)
+}
+
+func TestProxy_extractAndStoreMemories_NilMessage(t *testing.T) {
+	store := newMockProxyStore()
+
+	proxy := NewProxy(&ProxyConfig{
+		Backend:          "http://localhost:8080",
+		AutoRemember:     true,
+		DefaultNamespace: "test",
+	}, &ProxyDeps{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	messages := []ChatMessage{
+		{Role: "user", Content: "Hello"},
+	}
+
+	// Response with nil message
+	resp := &ChatCompletionResponse{
+		Choices: []Choice{
+			{Index: 0, Message: nil},
+		},
+	}
+
+	proxy.extractAndStoreMemories("test-ns", messages, resp)
+
+	time.Sleep(50 * time.Millisecond)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	assert.Empty(t, store.memories)
+}
+
+func TestProxy_extractAndStoreMemoriesFromAccumulator_Direct(t *testing.T) {
+	store := newMockProxyStore()
+
+	proxy := NewProxy(&ProxyConfig{
+		Backend:          "http://localhost:8080",
+		AutoRemember:     true,
+		DefaultNamespace: "test",
+	}, &ProxyDeps{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	messages := []ChatMessage{
+		{Role: "user", Content: "I prefer dark mode for coding."},
+	}
+
+	acc := NewAccumulator()
+	acc.Add(&ChatCompletionChunk{
+		ID:      "chunk-1",
+		Object:  "chat.completion.chunk",
+		Created: time.Now().Unix(),
+		Model:   "gpt-4",
+		Choices: []Choice{
+			{Index: 0, Delta: &ChatMessage{Content: "I understand you prefer dark mode. I'll remember that preference."}},
+		},
+	})
+
+	proxy.extractAndStoreMemoriesFromAccumulator("test-ns", messages, acc)
+
+	time.Sleep(50 * time.Millisecond)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	assert.NotEmpty(t, store.memories)
+}
+
+func TestProxy_extractAndStoreMemoriesFromAccumulator_EmptyContent(t *testing.T) {
+	store := newMockProxyStore()
+
+	proxy := NewProxy(&ProxyConfig{
+		Backend:          "http://localhost:8080",
+		AutoRemember:     true,
+		DefaultNamespace: "test",
+	}, &ProxyDeps{
+		Store:  store,
+		Logger: zap.NewNop(),
+	})
+
+	messages := []ChatMessage{
+		{Role: "user", Content: "Hello"},
+	}
+
+	// Empty accumulator
+	acc := NewAccumulator()
+
+	proxy.extractAndStoreMemoriesFromAccumulator("test-ns", messages, acc)
+
+	time.Sleep(50 * time.Millisecond)
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	assert.Empty(t, store.memories)
 }
