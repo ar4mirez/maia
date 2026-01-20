@@ -51,33 +51,33 @@ func main() {
 
 	namespace := "proxy-example"
 
-	fmt.Println("=== MAIA OpenAI Proxy Example ===\n")
+	fmt.Println("=== MAIA OpenAI Proxy Example ===")
 
 	// Example 1: Store some preferences first
-	fmt.Println("Step 1: Storing user preferences via MAIA API...\n")
+	fmt.Println("Step 1: Storing user preferences via MAIA API...")
 	storePreferences(namespace)
 
 	// Example 2: Chat with context injection
-	fmt.Println("Step 2: Chatting through proxy (context will be injected)...\n")
+	fmt.Println("Step 2: Chatting through proxy (context will be injected)...")
 	response := chat(apiKey, namespace, "What do you know about my preferences?", false)
 	fmt.Printf("Assistant: %s\n\n", response)
 
 	// Example 3: Store a memory through conversation
-	fmt.Println("Step 3: Storing new memory through conversation...\n")
+	fmt.Println("Step 3: Storing new memory through conversation...")
 	response = chat(apiKey, namespace, "Remember that I'm working on a Python project called data-pipeline", false)
 	fmt.Printf("Assistant: %s\n\n", response)
 
 	// Example 4: Verify the memory was stored
-	fmt.Println("Step 4: Verifying memory was stored...\n")
+	fmt.Println("Step 4: Verifying memory was stored...")
 	response = chat(apiKey, namespace, "What project am I working on?", false)
 	fmt.Printf("Assistant: %s\n\n", response)
 
 	// Example 5: Streaming response
-	fmt.Println("Step 5: Streaming response...\n")
+	fmt.Println("Step 5: Streaming response...")
 	streamChat(apiKey, namespace, "Tell me a short joke about programming")
 
 	// Example 6: Skip memory injection
-	fmt.Println("\nStep 6: Chat without memory injection (fresh context)...\n")
+	fmt.Println("\nStep 6: Chat without memory injection (fresh context)...")
 	response = chatWithOptions(apiKey, namespace, "What do you know about me?", map[string]string{
 		"X-MAIA-Skip-Memory": "true",
 	})

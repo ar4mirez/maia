@@ -49,7 +49,7 @@ func main() {
 
 // runResearchAgent simulates a research agent discovering information.
 func runResearchAgent(ctx context.Context, client *maia.Client, agentNS, projectNS string) {
-	fmt.Println("=== Research Agent: Discovering Information ===\n")
+	fmt.Println("=== Research Agent: Discovering Information ===")
 
 	// Research agent discovers facts about the project
 	discoveries := []maia.CreateMemoryInput{
@@ -95,7 +95,7 @@ func runResearchAgent(ctx context.Context, client *maia.Client, agentNS, project
 	}
 
 	// Promote key findings to project namespace
-	fmt.Println("=== Promoting Key Findings to Project Namespace ===\n")
+	fmt.Println("=== Promoting Key Findings to Project Namespace ===")
 
 	promotions := []maia.CreateMemoryInput{
 		{
@@ -136,7 +136,7 @@ func runResearchAgent(ctx context.Context, client *maia.Client, agentNS, project
 
 // runCodeAgent simulates a code agent using research and storing implementations.
 func runCodeAgent(ctx context.Context, client *maia.Client, agentNS, projectNS string) {
-	fmt.Println("=== Code Agent: Gathering Context ===\n")
+	fmt.Println("=== Code Agent: Gathering Context ===")
 
 	// First, recall what the research agent found
 	queries := []string{
@@ -168,7 +168,7 @@ func runCodeAgent(ctx context.Context, client *maia.Client, agentNS, projectNS s
 	}
 
 	// Store implementation details
-	fmt.Println("=== Code Agent: Recording Implementations ===\n")
+	fmt.Println("=== Code Agent: Recording Implementations ===")
 
 	implementations := []maia.CreateMemoryInput{
 		{
@@ -222,7 +222,7 @@ func runCodeAgent(ctx context.Context, client *maia.Client, agentNS, projectNS s
 
 // runReviewAgent simulates a review agent gathering context from all sources.
 func runReviewAgent(ctx context.Context, client *maia.Client, agentNS, projectNS string) {
-	fmt.Println("=== Review Agent: Gathering Full Context ===\n")
+	fmt.Println("=== Review Agent: Gathering Full Context ===")
 
 	// Review agent needs context from all sources
 	result, err := client.Recall(ctx,
@@ -267,7 +267,7 @@ func runReviewAgent(ctx context.Context, client *maia.Client, agentNS, projectNS
 	}
 
 	// Store review notes
-	fmt.Println("=== Review Agent: Recording Notes ===\n")
+	fmt.Println("=== Review Agent: Recording Notes ===")
 
 	notes := []string{
 		"REVIEW: Auth implementation follows security best practices - httpOnly cookies, token refresh",
