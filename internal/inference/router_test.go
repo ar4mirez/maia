@@ -45,7 +45,8 @@ func TestRouter_Route_DefaultProvider(t *testing.T) {
 	router := NewRouter(RoutingConfig{}, "default")
 
 	defaultProvider := NewMockProvider("default")
-	router.RegisterProvider(defaultProvider)
+	err := router.RegisterProvider(defaultProvider)
+	require.NoError(t, err)
 
 	provider, err := router.Route(context.Background(), "unknown-model")
 	require.NoError(t, err)
@@ -64,8 +65,10 @@ func TestRouter_Route_WithMapping(t *testing.T) {
 	ollamaProvider := NewMockProvider("ollama")
 	openrouterProvider := NewMockProvider("openrouter")
 
-	router.RegisterProvider(ollamaProvider)
-	router.RegisterProvider(openrouterProvider)
+	err := router.RegisterProvider(ollamaProvider)
+	require.NoError(t, err)
+	err = router.RegisterProvider(openrouterProvider)
+	require.NoError(t, err)
 
 	// Test llama model routes to ollama
 	provider, err := router.Route(context.Background(), "llama2")
@@ -90,7 +93,7 @@ func TestRouter_Complete(t *testing.T) {
 
 	mockProvider := NewMockProvider("mock").
 		WithResponse("Test response")
-	router.RegisterProvider(mockProvider)
+	_ = router.RegisterProvider(mockProvider)
 
 	req := &CompletionRequest{
 		Model: "any-model",
@@ -109,7 +112,7 @@ func TestRouter_Stream(t *testing.T) {
 
 	mockProvider := NewMockProvider("mock").
 		WithResponse("Streaming test")
-	router.RegisterProvider(mockProvider)
+	_ = router.RegisterProvider(mockProvider)
 
 	req := &CompletionRequest{
 		Model: "any-model",
@@ -134,8 +137,8 @@ func TestRouter_ListModels(t *testing.T) {
 	provider1 := NewMockProvider("provider1").WithModels([]string{"model-a", "model-b"})
 	provider2 := NewMockProvider("provider2").WithModels([]string{"model-c"})
 
-	router.RegisterProvider(provider1)
-	router.RegisterProvider(provider2)
+	_ = router.RegisterProvider(provider1)
+	_ = router.RegisterProvider(provider2)
 
 	models, err := router.ListModels(context.Background())
 	require.NoError(t, err)
@@ -148,8 +151,8 @@ func TestRouter_Close(t *testing.T) {
 	provider1 := NewMockProvider("provider1")
 	provider2 := NewMockProvider("provider2")
 
-	router.RegisterProvider(provider1)
-	router.RegisterProvider(provider2)
+	_ = router.RegisterProvider(provider1)
+	_ = router.RegisterProvider(provider2)
 
 	err := router.Close()
 	assert.NoError(t, err)
@@ -163,7 +166,7 @@ func TestRouter_GetProvider(t *testing.T) {
 	router := NewRouter(RoutingConfig{}, "")
 
 	mockProvider := NewMockProvider("test-provider")
-	router.RegisterProvider(mockProvider)
+	_ = router.RegisterProvider(mockProvider)
 
 	provider, ok := router.GetProvider("test-provider")
 	assert.True(t, ok)
@@ -206,8 +209,8 @@ func TestRouter_RouteWithOptions_ExplicitProvider(t *testing.T) {
 
 	defaultProvider := NewMockProvider("default")
 	explicitProvider := NewMockProvider("explicit")
-	router.RegisterProvider(defaultProvider)
-	router.RegisterProvider(explicitProvider)
+	_ = router.RegisterProvider(defaultProvider)
+	_ = router.RegisterProvider(explicitProvider)
 
 	// Route with explicit provider
 	provider, err := router.RouteWithOptions(context.Background(), "any-model", "explicit")
@@ -224,7 +227,7 @@ func TestRouter_RouteWithOptions_ExplicitProviderNotFound(t *testing.T) {
 	router := NewRouter(RoutingConfig{}, "default")
 
 	defaultProvider := NewMockProvider("default")
-	router.RegisterProvider(defaultProvider)
+	_ = router.RegisterProvider(defaultProvider)
 
 	_, err := router.RouteWithOptions(context.Background(), "any-model", "non-existent")
 	assert.Error(t, err)
@@ -242,7 +245,7 @@ func TestRouter_WithHealthChecker(t *testing.T) {
 	router := NewRouter(RoutingConfig{}, "default", WithHealthChecker(hc))
 
 	provider := NewMockProvider("test-provider")
-	router.RegisterProvider(provider)
+	_ = router.RegisterProvider(provider)
 
 	// Provider should be registered with health checker
 	_, ok := hc.GetHealth("test-provider")
@@ -254,8 +257,8 @@ func TestRouter_SetHealthChecker(t *testing.T) {
 
 	provider1 := NewMockProvider("provider1")
 	provider2 := NewMockProvider("provider2")
-	router.RegisterProvider(provider1)
-	router.RegisterProvider(provider2)
+	_ = router.RegisterProvider(provider1)
+	_ = router.RegisterProvider(provider2)
 
 	cfg := HealthConfig{
 		Enabled:            false,
@@ -291,8 +294,8 @@ func TestRouter_Failover(t *testing.T) {
 	// Register primary and backup providers
 	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"})
 	backupProvider := NewMockProvider("backup").WithModels([]string{"test*"})
-	router.RegisterProvider(primaryProvider)
-	router.RegisterProvider(backupProvider)
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
 
 	// Initially routes to primary
 	provider, err := router.Route(context.Background(), "test-model")
@@ -328,8 +331,8 @@ func TestRouter_FailoverDisabled(t *testing.T) {
 	// Register primary and backup providers
 	primaryProvider := NewMockProvider("primary").WithModels([]string{"test*"})
 	backupProvider := NewMockProvider("backup").WithModels([]string{"test*"})
-	router.RegisterProvider(primaryProvider)
-	router.RegisterProvider(backupProvider)
+	_ = router.RegisterProvider(primaryProvider)
+	_ = router.RegisterProvider(backupProvider)
 
 	// Mark primary as unhealthy
 	primaryProvider.WithError(ErrProviderClosed)
@@ -354,7 +357,7 @@ func TestRouter_CloseStopsHealthChecker(t *testing.T) {
 	router := NewRouter(RoutingConfig{}, "default", WithHealthChecker(hc))
 
 	provider := NewMockProvider("test-provider")
-	router.RegisterProvider(provider)
+	_ = router.RegisterProvider(provider)
 
 	// Start health checker
 	hc.Start()

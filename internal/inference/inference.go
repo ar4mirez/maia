@@ -6,7 +6,6 @@ package inference
 import (
 	"context"
 	"errors"
-	"io"
 	"time"
 )
 
@@ -294,11 +293,3 @@ func (a *Accumulator) GetContent() string {
 	return a.Contents[0]
 }
 
-// streamReaderAdapter wraps an io.ReadCloser for streaming.
-type streamReaderAdapter struct {
-	reader io.ReadCloser
-}
-
-func (s *streamReaderAdapter) Close() error {
-	return s.reader.Close()
-}

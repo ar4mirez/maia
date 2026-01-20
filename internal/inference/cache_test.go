@@ -408,7 +408,7 @@ func TestCachingRouter_Complete(t *testing.T) {
 
 	router := NewRouter(RoutingConfig{}, "mock")
 	mockProvider := NewMockProvider("mock").WithResponse("Cached response")
-	router.RegisterProvider(mockProvider)
+	_ = router.RegisterProvider(mockProvider)
 
 	cachingRouter := NewCachingRouter(router, cache)
 
@@ -449,7 +449,7 @@ func TestCachingRouter_Stream(t *testing.T) {
 
 	router := NewRouter(RoutingConfig{}, "mock")
 	mockProvider := NewMockProvider("mock").WithResponse("Stream test")
-	router.RegisterProvider(mockProvider)
+	_ = router.RegisterProvider(mockProvider)
 
 	cachingRouter := NewCachingRouter(router, cache)
 

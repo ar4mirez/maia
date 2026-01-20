@@ -528,9 +528,9 @@ func (s *Server) handleMaiaComplete(ctx context.Context, req *mcp.CallToolReques
 	memoriesUsed := 0
 
 	// Inject memory context if enabled (default: true)
+	// When InjectMemory is false (zero value), default to true
 	injectMemory := input.InjectMemory
-	if !injectMemory && input.InjectMemory == false {
-		// Check if it was explicitly set to false or just default
+	if !injectMemory {
 		injectMemory = true // Default to true
 	}
 
@@ -684,8 +684,9 @@ func (s *Server) handleMaiaStream(ctx context.Context, req *mcp.CallToolRequest,
 	memoriesUsed := 0
 
 	// Inject memory context if enabled (default: true)
+	// When InjectMemory is false (zero value), default to true
 	injectMemory := input.InjectMemory
-	if !injectMemory && input.InjectMemory == false {
+	if !injectMemory {
 		injectMemory = true
 	}
 

@@ -1082,7 +1082,7 @@ func setupTestServerWithInference(t *testing.T) (*Server, func()) {
 	// Create inference router with mock provider
 	inferenceRouter := inference.NewRouter(inference.RoutingConfig{}, "mock")
 	mockInferenceProvider := inference.NewMockProvider("mock").WithResponse("Test inference response")
-	inferenceRouter.RegisterProvider(mockInferenceProvider)
+	_ = inferenceRouter.RegisterProvider(mockInferenceProvider)
 
 	// Create server with inference
 	server, err := NewServer(&Options{
@@ -1203,7 +1203,7 @@ func TestTool_MaiaComplete_ExplicitProvider(t *testing.T) {
 
 	// Add another provider
 	anotherProvider := inference.NewMockProvider("another").WithResponse("Another response")
-	server.inferenceRouter.RegisterProvider(anotherProvider)
+	_ = server.inferenceRouter.RegisterProvider(anotherProvider)
 
 	// Request with explicit provider
 	_, output, err := server.handleMaiaComplete(ctx, nil, MaiaCompleteInput{
@@ -1303,7 +1303,7 @@ func TestTool_MaiaListModels_FilterByProvider(t *testing.T) {
 
 	// Add another provider
 	anotherProvider := inference.NewMockProvider("another").WithModels([]string{"another-model"})
-	server.inferenceRouter.RegisterProvider(anotherProvider)
+	_ = server.inferenceRouter.RegisterProvider(anotherProvider)
 
 	// Filter by mock provider
 	_, output, err := server.handleMaiaListModels(ctx, nil, MaiaListModelsInput{
