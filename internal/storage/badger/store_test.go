@@ -1393,3 +1393,192 @@ func TestStore_CreateMemory_WithRelations(t *testing.T) {
 	assert.Len(t, mem.Relations, 2)
 	assert.Equal(t, "related-1", mem.Relations[0].TargetID)
 }
+
+func TestStore_DeleteMemory_VerifyNamespaceIndexCleanup(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-delete-index"
+
+	// Create multiple memories in same namespace
+	var memIDs []string
+	for i := 0; i < 5; i++ {
+		mem, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+			Namespace: namespace,
+			Content:   "Memory to test index cleanup " + string(rune('A'+i)),
+		})
+		require.NoError(t, err)
+		memIDs = append(memIDs, mem.ID)
+	}
+
+	// Verify all 5 memories exist in namespace listing
+	memories, err := store.ListMemories(ctx, namespace, &storage.ListOptions{Limit: 100})
+	require.NoError(t, err)
+	assert.Len(t, memories, 5)
+
+	// Delete 3 memories
+	for i := 0; i < 3; i++ {
+		err := store.DeleteMemory(ctx, memIDs[i])
+		require.NoError(t, err)
+	}
+
+	// Verify only 2 remain in namespace listing
+	memories, err = store.ListMemories(ctx, namespace, &storage.ListOptions{Limit: 100})
+	require.NoError(t, err)
+	assert.Len(t, memories, 2)
+
+	// Verify the correct memories remain
+	foundIDs := make(map[string]bool)
+	for _, mem := range memories {
+		foundIDs[mem.ID] = true
+	}
+	assert.True(t, foundIDs[memIDs[3]], "Memory 3 should still exist")
+	assert.True(t, foundIDs[memIDs[4]], "Memory 4 should still exist")
+}
+
+func TestStore_DeleteMemory_MultipleDeletionsSameNamespace(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	namespace := "test-multi-delete"
+
+	// Create and immediately delete multiple memories
+	for i := 0; i < 10; i++ {
+		mem, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+			Namespace: namespace,
+			Content:   "Ephemeral memory " + string(rune('0'+i)),
+		})
+		require.NoError(t, err)
+
+		// Delete immediately
+		err = store.DeleteMemory(ctx, mem.ID)
+		require.NoError(t, err)
+
+		// Verify it's gone
+		_, err = store.GetMemory(ctx, mem.ID)
+		assert.Error(t, err)
+	}
+
+	// Verify namespace is empty
+	memories, err := store.ListMemories(ctx, namespace, &storage.ListOptions{Limit: 100})
+	require.NoError(t, err)
+	assert.Len(t, memories, 0)
+}
+
+func TestStore_DeleteNamespace_VerifyNameIndexCleanup(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create multiple namespaces
+	var nsIDs []string
+	names := []string{"ns-cleanup-a", "ns-cleanup-b", "ns-cleanup-c"}
+	for _, name := range names {
+		ns, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+			Name: name,
+			Config: storage.NamespaceConfig{
+				TokenBudget: 1000,
+			},
+		})
+		require.NoError(t, err)
+		nsIDs = append(nsIDs, ns.ID)
+	}
+
+	// Verify all namespaces can be found by name
+	for _, name := range names {
+		ns, err := store.GetNamespaceByName(ctx, name)
+		require.NoError(t, err)
+		assert.Equal(t, name, ns.Name)
+	}
+
+	// Delete middle namespace
+	err := store.DeleteNamespace(ctx, nsIDs[1])
+	require.NoError(t, err)
+
+	// Verify name index is cleaned up - should not find by name
+	_, err = store.GetNamespaceByName(ctx, "ns-cleanup-b")
+	assert.Error(t, err)
+	var notFound *storage.ErrNotFound
+	assert.ErrorAs(t, err, &notFound)
+
+	// Other namespaces should still be findable by name
+	_, err = store.GetNamespaceByName(ctx, "ns-cleanup-a")
+	require.NoError(t, err)
+	_, err = store.GetNamespaceByName(ctx, "ns-cleanup-c")
+	require.NoError(t, err)
+}
+
+func TestStore_DeleteNamespace_MultipleCreatesAndDeletes(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Test creating and deleting namespaces with same name
+	for i := 0; i < 5; i++ {
+		// Create
+		ns, err := store.CreateNamespace(ctx, &storage.CreateNamespaceInput{
+			Name: "recycled-ns",
+			Config: storage.NamespaceConfig{
+				TokenBudget: 1000 + i,
+			},
+		})
+		require.NoError(t, err)
+
+		// Verify it exists
+		retrieved, err := store.GetNamespaceByName(ctx, "recycled-ns")
+		require.NoError(t, err)
+		assert.Equal(t, ns.ID, retrieved.ID)
+
+		// Delete
+		err = store.DeleteNamespace(ctx, ns.ID)
+		require.NoError(t, err)
+
+		// Verify it's gone
+		_, err = store.GetNamespace(ctx, ns.ID)
+		assert.Error(t, err)
+		_, err = store.GetNamespaceByName(ctx, "recycled-ns")
+		assert.Error(t, err)
+	}
+}
+
+func TestStore_DeleteMemory_AfterUpdate(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create memory
+	mem, err := store.CreateMemory(ctx, &storage.CreateMemoryInput{
+		Namespace:  "test-update-delete",
+		Content:    "Original content",
+		Confidence: 0.5,
+	})
+	require.NoError(t, err)
+
+	// Update it
+	newContent := "Updated content"
+	newConfidence := 0.9
+	updated, err := store.UpdateMemory(ctx, mem.ID, &storage.UpdateMemoryInput{
+		Content:    &newContent,
+		Confidence: &newConfidence,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, newContent, updated.Content)
+
+	// Delete it
+	err = store.DeleteMemory(ctx, mem.ID)
+	require.NoError(t, err)
+
+	// Verify it's gone
+	_, err = store.GetMemory(ctx, mem.ID)
+	assert.Error(t, err)
+
+	// Verify namespace listing is clean
+	memories, err := store.ListMemories(ctx, "test-update-delete", &storage.ListOptions{Limit: 100})
+	require.NoError(t, err)
+	assert.Len(t, memories, 0)
+}

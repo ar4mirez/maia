@@ -22,7 +22,8 @@
       "Bash(git status:*)",
       "Bash(git check-ignore:*)",
       "Bash(ls:*)",
-      "Bash(go vet:*)"
+      "Bash(go vet:*)",
+      "Bash(git stash:*)"
     ]
   }
 }
