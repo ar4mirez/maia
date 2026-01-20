@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.25-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -52,9 +52,6 @@ RUN mkdir -p /data /config && \
 COPY --from=builder /build/maia /usr/local/bin/maia
 COPY --from=builder /build/maiactl /usr/local/bin/maiactl
 COPY --from=builder /build/mcp-server /usr/local/bin/mcp-server
-
-# Copy default configuration (if exists)
-COPY --from=builder /build/maia.yaml* /config/ 2>/dev/null || true
 
 # Set environment variables
 ENV MAIA_STORAGE_DATA_DIR=/data \
