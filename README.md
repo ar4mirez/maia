@@ -448,6 +448,52 @@ kubectl apply -f deployments/kubernetes/examples/tenant-example.yaml
 
 See `deployments/kubernetes/examples/` for more CRD examples.
 
+### Kubernetes Operator
+
+MAIA includes a Kubernetes operator for declarative management of MAIA instances and tenants:
+
+```bash
+# Install CRDs
+make operator-install
+
+# Deploy the operator
+make operator-deploy
+
+# Or build and run locally
+make operator-build
+make operator-run
+```
+
+The operator provides:
+
+- **MaiaInstance**: Deploys and manages MAIA server instances
+- **MaiaTenant**: Manages tenants via the MAIA Admin API
+- **Automatic ServiceMonitor**: Creates Prometheus ServiceMonitor when enabled
+- **Automated Backups**: Creates CronJobs for scheduled backups
+
+Example MaiaInstance:
+
+```yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia
+spec:
+  replicas: 3
+  storage:
+    size: 50Gi
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retentionDays: 30
+```
+
+See [Operator Documentation](docs/operator.md) for full details.
+
 ## Metrics & Monitoring
 
 MAIA exposes Prometheus metrics at `/metrics`:
@@ -619,6 +665,7 @@ maia/
 ├── internal/
 │   ├── audit/          # Audit logging
 │   ├── config/         # Configuration management
+│   ├── replication/    # Multi-region replication
 │   ├── server/         # HTTP/gRPC server
 │   ├── storage/        # Storage layer (BadgerDB)
 │   ├── tenant/         # Multi-tenancy
@@ -627,6 +674,12 @@ maia/
 │   ├── maia/           # Go SDK (public)
 │   ├── mcp/            # MCP implementation
 │   └── proxy/          # OpenAI proxy
+├── operator/           # Kubernetes Operator
+│   ├── api/            # CRD Go types
+│   ├── cmd/            # Operator entrypoint
+│   ├── config/         # Deployment manifests
+│   ├── internal/       # Controllers
+│   └── pkg/            # Admin API client
 ├── deployments/
 │   ├── helm/           # Helm chart
 │   ├── kubernetes/     # Kubernetes manifests & CRDs

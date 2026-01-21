@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"time"
 
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -43,6 +45,8 @@ type MaiaInstanceReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services;configmaps;persistentvolumeclaims;secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop.
@@ -128,6 +132,32 @@ func (r *MaiaInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 			logger.Error(err, "Failed to reconcile Ingress")
 			r.setCondition(ctx, instance, maiav1alpha1.ConditionTypeDegraded, metav1.ConditionTrue,
 				"IngressFailed", err.Error())
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Reconcile ServiceMonitor (if enabled)
+	if instance.Spec.Metrics.Enabled && instance.Spec.Metrics.ServiceMonitor.Enabled {
+		if err := r.reconcileServiceMonitor(ctx, instance); err != nil {
+			logger.Error(err, "Failed to reconcile ServiceMonitor")
+			r.setCondition(ctx, instance, maiav1alpha1.ConditionTypeDegraded, metav1.ConditionTrue,
+				"ServiceMonitorFailed", err.Error())
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Reconcile Backup CronJob (if enabled)
+	if instance.Spec.Backup.Enabled {
+		if err := r.reconcileBackupPVC(ctx, instance); err != nil {
+			logger.Error(err, "Failed to reconcile Backup PVC")
+			r.setCondition(ctx, instance, maiav1alpha1.ConditionTypeDegraded, metav1.ConditionTrue,
+				"BackupPVCFailed", err.Error())
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileBackupCronJob(ctx, instance); err != nil {
+			logger.Error(err, "Failed to reconcile Backup CronJob")
+			r.setCondition(ctx, instance, maiav1alpha1.ConditionTypeDegraded, metav1.ConditionTrue,
+				"BackupCronJobFailed", err.Error())
 			return ctrl.Result{}, err
 		}
 	}
@@ -568,6 +598,233 @@ func (r *MaiaInstanceReconciler) reconcileIngress(ctx context.Context, instance 
 	return err
 }
 
+func (r *MaiaInstanceReconciler) reconcileServiceMonitor(ctx context.Context, instance *maiav1alpha1.MaiaInstance) error {
+	sm := &monitoringv1.ServiceMonitor{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name,
+			Namespace: instance.Namespace,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, sm, func() error {
+		labels := map[string]string{
+			"app.kubernetes.io/name":       "maia",
+			"app.kubernetes.io/instance":   instance.Name,
+			"app.kubernetes.io/managed-by": "maia-operator",
+		}
+
+		// Merge with user-provided labels
+		for k, v := range instance.Spec.Metrics.ServiceMonitor.Labels {
+			labels[k] = v
+		}
+
+		sm.Labels = labels
+
+		interval := instance.Spec.Metrics.ServiceMonitor.Interval
+		if interval == "" {
+			interval = "30s"
+		}
+
+		sm.Spec = monitoringv1.ServiceMonitorSpec{
+			Selector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"app.kubernetes.io/name":     "maia",
+					"app.kubernetes.io/instance": instance.Name,
+				},
+			},
+			NamespaceSelector: monitoringv1.NamespaceSelector{
+				MatchNames: []string{instance.Namespace},
+			},
+			Endpoints: []monitoringv1.Endpoint{
+				{
+					Port:     "http",
+					Path:     "/metrics",
+					Interval: monitoringv1.Duration(interval),
+				},
+			},
+		}
+
+		return controllerutil.SetControllerReference(instance, sm, r.Scheme)
+	})
+	return err
+}
+
+func (r *MaiaInstanceReconciler) reconcileBackupPVC(ctx context.Context, instance *maiav1alpha1.MaiaInstance) error {
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name + "-backup",
+			Namespace: instance.Namespace,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, pvc, func() error {
+		// Only set spec on creation (PVC specs are immutable)
+		if pvc.CreationTimestamp.IsZero() {
+			storageSize := instance.Spec.Backup.StorageSize
+			if storageSize == "" {
+				storageSize = "20Gi"
+			}
+
+			pvc.Spec = corev1.PersistentVolumeClaimSpec{
+				AccessModes: []corev1.PersistentVolumeAccessMode{
+					corev1.ReadWriteOnce,
+				},
+				Resources: corev1.VolumeResourceRequirements{
+					Requests: corev1.ResourceList{
+						corev1.ResourceStorage: resource.MustParse(storageSize),
+					},
+				},
+			}
+			if instance.Spec.Storage.StorageClassName != nil {
+				pvc.Spec.StorageClassName = instance.Spec.Storage.StorageClassName
+			}
+		}
+		return controllerutil.SetControllerReference(instance, pvc, r.Scheme)
+	})
+	return err
+}
+
+func (r *MaiaInstanceReconciler) reconcileBackupCronJob(ctx context.Context, instance *maiav1alpha1.MaiaInstance) error {
+	cronJob := &batchv1.CronJob{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      instance.Name + "-backup",
+			Namespace: instance.Namespace,
+		},
+	}
+
+	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, cronJob, func() error {
+		labels := map[string]string{
+			"app.kubernetes.io/name":       "maia",
+			"app.kubernetes.io/instance":   instance.Name,
+			"app.kubernetes.io/component":  "backup",
+			"app.kubernetes.io/managed-by": "maia-operator",
+		}
+
+		schedule := instance.Spec.Backup.Schedule
+		if schedule == "" {
+			schedule = "0 2 * * *" // Default: 2 AM daily
+		}
+
+		retentionDays := instance.Spec.Backup.RetentionDays
+		if retentionDays == 0 {
+			retentionDays = 30
+		}
+
+		compress := instance.Spec.Backup.Compress
+
+		// Build backup command
+		backupCmd := fmt.Sprintf(`#!/bin/sh
+set -e
+
+BACKUP_DIR="/backup"
+DATA_DIR="%s"
+TIMESTAMP=$(date +%%Y%%m%%d-%%H%%M%%S)
+BACKUP_NAME="maia-backup-${TIMESTAMP}"
+
+echo "Starting backup at $(date)"
+
+# Create backup
+if [ "%t" = "true" ]; then
+    tar -czf "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" -C "${DATA_DIR}" .
+    sha256sum "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz" > "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.sha256"
+else
+    tar -cf "${BACKUP_DIR}/${BACKUP_NAME}.tar" -C "${DATA_DIR}" .
+    sha256sum "${BACKUP_DIR}/${BACKUP_NAME}.tar" > "${BACKUP_DIR}/${BACKUP_NAME}.tar.sha256"
+fi
+
+# Clean up old backups
+echo "Cleaning up backups older than %d days"
+find "${BACKUP_DIR}" -name "maia-backup-*.tar*" -mtime +%d -delete
+
+echo "Backup completed at $(date)"
+`, getStorageDataDir(instance.Spec.Storage), compress, retentionDays, retentionDays)
+
+		successfulJobsHistoryLimit := int32(3)
+		failedJobsHistoryLimit := int32(1)
+		backoffLimit := int32(3)
+
+		cronJob.Spec = batchv1.CronJobSpec{
+			Schedule:                   schedule,
+			SuccessfulJobsHistoryLimit: &successfulJobsHistoryLimit,
+			FailedJobsHistoryLimit:     &failedJobsHistoryLimit,
+			JobTemplate: batchv1.JobTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: batchv1.JobSpec{
+					BackoffLimit: &backoffLimit,
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{
+							Labels: labels,
+						},
+						Spec: corev1.PodSpec{
+							RestartPolicy: corev1.RestartPolicyOnFailure,
+							Containers: []corev1.Container{
+								{
+									Name:  "backup",
+									Image: getImage(instance.Spec.Image),
+									Command: []string{
+										"/bin/sh",
+										"-c",
+										backupCmd,
+									},
+									VolumeMounts: []corev1.VolumeMount{
+										{
+											Name:      "data",
+											MountPath: getStorageDataDir(instance.Spec.Storage),
+											ReadOnly:  true,
+										},
+										{
+											Name:      "backup",
+											MountPath: "/backup",
+										},
+									},
+									Resources: corev1.ResourceRequirements{
+										Requests: corev1.ResourceList{
+											corev1.ResourceCPU:    resource.MustParse("100m"),
+											corev1.ResourceMemory: resource.MustParse("128Mi"),
+										},
+										Limits: corev1.ResourceList{
+											corev1.ResourceCPU:    resource.MustParse("500m"),
+											corev1.ResourceMemory: resource.MustParse("512Mi"),
+										},
+									},
+								},
+							},
+							Volumes: []corev1.Volume{
+								{
+									Name: "data",
+									VolumeSource: corev1.VolumeSource{
+										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: instance.Name + "-data",
+										},
+									},
+								},
+								{
+									Name: "backup",
+									VolumeSource: corev1.VolumeSource{
+										PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+											ClaimName: instance.Name + "-backup",
+										},
+									},
+								},
+							},
+							SecurityContext: &corev1.PodSecurityContext{
+								RunAsNonRoot: ptr(true),
+								RunAsUser:    ptr(int64(1000)),
+								FSGroup:      ptr(int64(1000)),
+							},
+						},
+					},
+				},
+			},
+		}
+
+		return controllerutil.SetControllerReference(instance, cronJob, r.Scheme)
+	})
+	return err
+}
+
 func (r *MaiaInstanceReconciler) updateStatus(ctx context.Context, instance *maiav1alpha1.MaiaInstance) error {
 	// Get the deployment to check status
 	deployment := &appsv1.Deployment{}
@@ -620,6 +877,8 @@ func (r *MaiaInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&batchv1.CronJob{}).
+		Owns(&monitoringv1.ServiceMonitor{}).
 		Named("maiainstance").
 		Complete(r)
 }

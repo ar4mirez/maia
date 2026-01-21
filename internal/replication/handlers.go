@@ -10,9 +10,20 @@ import (
 
 // Handler provides HTTP handlers for replication endpoints.
 type Handler struct {
-	manager *Manager
-	wal     WAL
-	logger  *zap.Logger
+	manager   *Manager
+	wal       WAL
+	migration *MigrationExecutor
+	routing   *RoutingMiddleware
+	logger    *zap.Logger
+}
+
+// HandlerConfig configures the replication handler.
+type HandlerConfig struct {
+	Manager   *Manager
+	WAL       WAL
+	Migration *MigrationExecutor
+	Routing   *RoutingMiddleware
+	Logger    *zap.Logger
 }
 
 // NewHandler creates a new replication HTTP handler.
@@ -27,6 +38,21 @@ func NewHandler(manager *Manager, wal WAL, logger *zap.Logger) *Handler {
 	}
 }
 
+// NewHandlerWithConfig creates a handler with full configuration.
+func NewHandlerWithConfig(cfg *HandlerConfig) *Handler {
+	logger := cfg.Logger
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	return &Handler{
+		manager:   cfg.Manager,
+		wal:       cfg.WAL,
+		migration: cfg.Migration,
+		routing:   cfg.Routing,
+		logger:    logger,
+	}
+}
+
 // RegisterRoutes registers replication routes on the given router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	repl := rg.Group("/replication")
@@ -38,6 +64,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		// Position and status
 		repl.GET("/position", h.getPosition)
 		repl.GET("/stats", h.getStats)
+		repl.GET("/health", h.getReplicationHealth)
 
 		// Leader/follower management
 		repl.GET("/leader", h.getLeaderInfo)
@@ -55,6 +82,20 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		placement.PUT("/:tenant_id", h.setTenantPlacement)
 		placement.DELETE("/:tenant_id", h.deleteTenantPlacement)
 	}
+}
+
+// RegisterAdminRoutes registers admin routes for migrations.
+func (h *Handler) RegisterAdminRoutes(admin *gin.RouterGroup) {
+	if h.migration == nil {
+		return
+	}
+
+	// Migration endpoints
+	admin.POST("/tenants/:id/migrate", h.startMigration)
+	admin.GET("/tenants/:id/migrations", h.listTenantMigrations)
+	admin.GET("/migrations", h.listAllMigrations)
+	admin.GET("/migrations/:id", h.getMigration)
+	admin.POST("/migrations/:id/cancel", h.cancelMigration)
 }
 
 // getEntries returns WAL entries after a given sequence.
@@ -434,5 +475,281 @@ func (h *Handler) deleteTenantPlacement(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "placement removed",
 		"tenant_id": tenantID,
+	})
+}
+
+// ReplicationHealthResponse contains the replication health status.
+type ReplicationHealthResponse struct {
+	Status    string                   `json:"status"`
+	Role      Role                     `json:"role"`
+	Region    string                   `json:"region"`
+	WAL       *WALHealthInfo           `json:"wal"`
+	Followers []FollowerHealthInfo     `json:"followers,omitempty"`
+	Leader    *LeaderHealthInfo        `json:"leader,omitempty"`
+}
+
+// WALHealthInfo contains WAL health information.
+type WALHealthInfo struct {
+	Position *WALPosition `json:"position"`
+	Size     int64        `json:"size"`
+	Entries  int64        `json:"entries"`
+}
+
+// FollowerHealthInfo contains follower health information.
+type FollowerHealthInfo struct {
+	ID        string  `json:"id"`
+	Region    string  `json:"region"`
+	Connected bool    `json:"connected"`
+	Lag       string  `json:"lag"`
+	Healthy   bool    `json:"healthy"`
+}
+
+// LeaderHealthInfo contains leader health information.
+type LeaderHealthInfo struct {
+	ID        string `json:"id"`
+	Endpoint  string `json:"endpoint"`
+	Region    string `json:"region"`
+	Connected bool   `json:"connected"`
+}
+
+// getReplicationHealth returns the overall replication health status.
+func (h *Handler) getReplicationHealth(c *gin.Context) {
+	stats, err := h.manager.Stats(c.Request.Context())
+	if err != nil {
+		h.logger.Error("failed to get replication stats", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get replication health",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	// Determine overall status
+	status := "healthy"
+	var followers []FollowerHealthInfo
+	var leader *LeaderHealthInfo
+
+	if h.manager.Role() == RoleLeader {
+		for _, f := range stats.Followers {
+			healthy := f.Connected && f.Lag < h.manager.cfg.MaxReplicationLag
+			if !healthy {
+				status = "degraded"
+			}
+			followers = append(followers, FollowerHealthInfo{
+				ID:        f.ID,
+				Region:    f.Region,
+				Connected: f.Connected,
+				Lag:       f.Lag.String(),
+				Healthy:   healthy,
+			})
+		}
+	} else if h.manager.Role() == RoleFollower {
+		if stats.Leader != nil {
+			leader = &LeaderHealthInfo{
+				ID:        stats.Leader.ID,
+				Endpoint:  stats.Leader.Endpoint,
+				Region:    stats.Leader.Region,
+				Connected: true,
+			}
+		} else {
+			status = "unhealthy"
+		}
+	}
+
+	response := ReplicationHealthResponse{
+		Status:    status,
+		Role:      stats.Role,
+		Region:    stats.Region,
+		WAL: &WALHealthInfo{
+			Position: stats.Position,
+			Size:     stats.WALSize,
+			Entries:  stats.WALEntries,
+		},
+		Followers: followers,
+		Leader:    leader,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// startMigration initiates a tenant migration.
+func (h *Handler) startMigration(c *gin.Context) {
+	if h.migration == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "migration service not available",
+			"code":  "MIGRATION_UNAVAILABLE",
+		})
+		return
+	}
+
+	tenantID := c.Param("id")
+
+	var req struct {
+		ToRegion string `json:"to_region" binding:"required"`
+		DryRun   bool   `json:"dry_run"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "to_region is required",
+			"code":  "INVALID_REQUEST",
+		})
+		return
+	}
+
+	migration, err := h.migration.StartMigration(c.Request.Context(), tenantID, req.ToRegion, req.DryRun)
+	if err != nil {
+		switch {
+		case err == ErrMigrationInProgress:
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "migration already in progress for this tenant",
+				"code":  "MIGRATION_IN_PROGRESS",
+			})
+		case err == ErrTargetRegionSameAsCurrent:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "target region is same as current primary",
+				"code":  "INVALID_TARGET_REGION",
+			})
+		case err == ErrInvalidPlacement:
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "tenant placement not found",
+				"code":  "PLACEMENT_NOT_FOUND",
+			})
+		default:
+			h.logger.Error("failed to start migration", zap.Error(err))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to start migration",
+				"code":  "INTERNAL_ERROR",
+			})
+		}
+		return
+	}
+
+	status := http.StatusAccepted
+	if req.DryRun {
+		status = http.StatusOK
+	}
+
+	c.JSON(status, gin.H{
+		"migration": migration,
+	})
+}
+
+// getMigration returns a migration by ID.
+func (h *Handler) getMigration(c *gin.Context) {
+	if h.migration == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "migration service not available",
+			"code":  "MIGRATION_UNAVAILABLE",
+		})
+		return
+	}
+
+	migrationID := c.Param("id")
+
+	migration, err := h.migration.GetMigration(c.Request.Context(), migrationID)
+	if err != nil {
+		if err == ErrMigrationNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "migration not found",
+				"code":  "MIGRATION_NOT_FOUND",
+			})
+			return
+		}
+		h.logger.Error("failed to get migration", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to get migration",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"migration": migration,
+	})
+}
+
+// cancelMigration cancels an in-progress migration.
+func (h *Handler) cancelMigration(c *gin.Context) {
+	if h.migration == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "migration service not available",
+			"code":  "MIGRATION_UNAVAILABLE",
+		})
+		return
+	}
+
+	migrationID := c.Param("id")
+
+	if err := h.migration.CancelMigration(c.Request.Context(), migrationID); err != nil {
+		if err == ErrMigrationNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "migration not found",
+				"code":  "MIGRATION_NOT_FOUND",
+			})
+			return
+		}
+		h.logger.Error("failed to cancel migration", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to cancel migration",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "migration cancelled",
+	})
+}
+
+// listTenantMigrations returns migrations for a specific tenant.
+func (h *Handler) listTenantMigrations(c *gin.Context) {
+	if h.migration == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "migration service not available",
+			"code":  "MIGRATION_UNAVAILABLE",
+		})
+		return
+	}
+
+	tenantID := c.Param("id")
+
+	migrations, err := h.migration.ListMigrations(c.Request.Context(), tenantID)
+	if err != nil {
+		h.logger.Error("failed to list migrations", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to list migrations",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"migrations": migrations,
+	})
+}
+
+// listAllMigrations returns all migrations.
+func (h *Handler) listAllMigrations(c *gin.Context) {
+	if h.migration == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "migration service not available",
+			"code":  "MIGRATION_UNAVAILABLE",
+		})
+		return
+	}
+
+	migrations, err := h.migration.ListAllMigrations(c.Request.Context())
+	if err != nil {
+		h.logger.Error("failed to list all migrations", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to list migrations",
+			"code":  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"migrations": migrations,
 	})
 }

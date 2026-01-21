@@ -1855,6 +1855,128 @@ replication:
 - `GET /v1/replication/stats` - Get replication statistics
 - `GET/PUT /v1/placements/:tenant_id` - Manage tenant placement
 
+### SESSION 36 (2026-01-21) - Replication Phase 3-5
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Created PRD 0007 for Replication Phase 3-5 implementation
+- [x] Generated task breakdown with 27 tasks across 5 phases
+
+**Phase 3: Tenant Placement Routing & Migration**:
+- [x] Implemented placement cache (`internal/replication/cache.go`)
+  - TTL-based caching for tenant placement data
+  - Cache statistics (hits, misses, size, hit rate)
+  - Invalidate/InvalidateAll methods
+  - Cleanup for expired entries
+- [x] Implemented request routing middleware (`internal/replication/routing.go`)
+  - Route requests based on tenant placement
+  - Forward to appropriate region
+  - Local vs remote routing logic
+- [x] Implemented tenant migration system (`internal/replication/migration.go`)
+  - Migration state machine (pending → in_progress → completed/failed/cancelled)
+  - MigrationExecutor with dry-run support
+  - Progress tracking (percent, entries copied, bytes transferred)
+  - Migration history and status queries
+- [x] Extended HTTP handlers with migration endpoints
+  - `POST /admin/migrations` - Start migration
+  - `GET /admin/migrations/:id` - Get migration status
+  - `POST /admin/migrations/:id/cancel` - Cancel migration
+  - `GET /admin/tenants/:id/migrations` - List tenant migrations
+  - `GET /admin/migrations` - List all migrations
+
+**Phase 4: Observability Enhancements**:
+- [x] Added migration metrics to Prometheus
+  - `maia_migration_duration_seconds` - Migration duration histogram
+  - `maia_migration_total` - Migration count by status
+  - `maia_migration_in_progress` - Current in-progress migrations
+  - `maia_follower_health_status` - Follower health gauge
+- [x] Created Grafana replication dashboard (`deployments/grafana/dashboards/maia-replication.json`)
+  - Replication health overview
+  - Lag and position metrics
+  - Throughput (entries/sec, bandwidth)
+  - Conflicts and errors
+  - Migration status panels
+- [x] Added Prometheus alerting rules for replication
+  - `MAIAReplicationLagWarning/Critical` - Lag thresholds
+  - `MAIAFollowerDisconnected/Long` - Follower health
+  - `MAIALeaderDisconnected` - Leader availability
+  - `MAIAHighConflictRate` - Conflict detection
+  - `MAIAWALGrowthHigh/Critical` - WAL storage
+  - `MAIAMigrationStuck/Failed` - Migration health
+
+**Phase 5: Automatic Failover & Leader Election**:
+- [x] Implemented leader election (`internal/replication/election.go`)
+  - Simplified Raft-like election protocol
+  - States: follower, candidate, leader
+  - Vote request/response handling
+  - Term-based leadership tracking
+  - Heartbeat mechanism
+  - Force leadership and step down methods
+- [x] Implemented automatic failover manager (`internal/replication/failover.go`)
+  - Health monitoring loop
+  - Configurable leader timeout
+  - Inhibit window to prevent flapping
+  - Manual and automatic failover triggers
+  - Failover event history (last 100 events)
+  - Status reporting
+- [x] Added comprehensive tests for all new components
+  - Cache tests: 11 tests
+  - Routing tests: 8 tests
+  - Migration tests: 9 tests
+  - Election tests: 15 tests
+  - Failover tests: 11 tests
+
+**Key Components Added**:
+
+- `internal/replication/cache.go` - Placement cache with TTL
+- `internal/replication/cache_test.go` - Cache tests
+- `internal/replication/routing.go` - Request routing middleware
+- `internal/replication/routing_test.go` - Routing tests
+- `internal/replication/migration.go` - Tenant migration system
+- `internal/replication/migration_test.go` - Migration tests
+- `internal/replication/election.go` - Leader election
+- `internal/replication/election_test.go` - Election tests
+- `internal/replication/failover.go` - Automatic failover
+- `internal/replication/failover_test.go` - Failover tests
+- `deployments/grafana/dashboards/maia-replication.json` - Replication dashboard
+- `.agent/tasks/0007-prd-replication-phase-3-5.md` - PRD document
+- `.agent/tasks/tasks-0007-prd-replication-phase-3-5.md` - Task breakdown
+
+**Bug Fixes During Implementation**:
+
+1. Fixed `h.manager.cfg.Sync.MaxLag` → `h.manager.cfg.MaxReplicationLag`
+2. Fixed election panic with 0 timeout values (added defaults)
+3. Fixed deadlock in failover tests (created `isInhibitedLocked()`)
+
+**Configuration**:
+
+```yaml
+replication:
+  enabled: true
+  failover:
+    enabled: true
+    leader_timeout: 30s
+    inhibit_window: 60s
+    health_check_interval: 5s
+  election:
+    node_id: node-1
+    nodes:
+      - node-1
+      - node-2
+      - node-3
+    min_election_timeout: 150ms
+    max_election_timeout: 300ms
+```
+
+**Notes**:
+
+- All tests pass with race detection
+- Linter clean
+- Replication package now has 75+ tests
+- Full multi-region replication implementation complete
+
 ---
 
 ## Next Steps
@@ -1866,12 +1988,131 @@ All features and advanced enhancements complete! The project is production-ready
 - Kubernetes Operator for declarative management
 - Audit logging for compliance
 - Backup/restore automation
-- Multi-region replication (Phase 1 & 2)
+- Multi-region replication (Phase 1-5 complete!)
+  - WAL-based change capture
+  - Leader-follower replication
+  - Tenant placement and routing
+  - Migration tools
+  - Leader election
+  - Automatic failover
 
 Future implementation opportunities:
-1. **Replication Phase 3-5** - Tenant placement migration, automatic failover, leader election
-2. **Advanced Analytics** - Usage analytics and insights dashboard
-3. **Operator Enhancements** - ServiceMonitor creation, CronJob for backups
+1. **Advanced Analytics** - Usage analytics and insights dashboard
+2. **Edge Caching** - Read replicas at edge locations
+
+---
+
+### SESSION 37 (2026-01-21) - Operator Enhancements
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Implemented ServiceMonitor reconciliation in MaiaInstance controller
+  - Added prometheus-operator dependency (`v0.88.0`)
+  - Auto-creates ServiceMonitor when `metrics.serviceMonitor.enabled` is true
+  - Configurable scrape interval and labels
+  - Proper owner references for garbage collection
+- [x] Implemented Backup CronJob reconciliation in MaiaInstance controller
+  - Creates dedicated PVC for backup storage (`{name}-backup`)
+  - Creates CronJob with configurable schedule (default: `0 2 * * *`)
+  - Backup script with compression support (gzip)
+  - Automatic retention cleanup (removes backups older than `retentionDays`)
+  - Proper volume mounts for data and backup directories
+- [x] Updated operator `SetupWithManager()` to own CronJob and ServiceMonitor resources
+- [x] Added RBAC markers for batch and monitoring.coreos.com resources
+- [x] Updated operator documentation with:
+  - Prometheus Integration section (prerequisites, configuration, verification)
+  - Automated Backups section (features, configuration, storage, retention, restore)
+- [x] Fixed markdown lint warnings in documentation
+
+**Key Components Modified**:
+
+- `operator/internal/controller/maiainstance_controller.go`
+  - Added imports for `monitoringv1` and `batchv1`
+  - Added RBAC markers for ServiceMonitor and CronJob
+  - Added `reconcileServiceMonitor()` method
+  - Added `reconcileBackupPVC()` method
+  - Added `reconcileBackupCronJob()` method
+  - Updated `SetupWithManager()` to own new resource types
+- `operator/go.mod` - Added prometheus-operator dependency
+- `docs/operator.md` - Added Prometheus Integration and Automated Backups documentation
+
+**Operator Features Added**:
+
+| Feature | Description |
+| --- | --- |
+| ServiceMonitor | Auto-creates Prometheus ServiceMonitor for metrics scraping |
+| Backup CronJob | Scheduled backups with compression and retention |
+| Backup PVC | Dedicated storage for backup data |
+
+**Configuration Example**:
+
+```yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia
+spec:
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      labels:
+        release: prometheus
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retentionDays: 30
+    storageSize: "20Gi"
+    compress: true
+```
+
+**Notes**:
+
+- Operator build succeeds
+- Tests require envtest (kubebuilder binaries) for execution
+- Dual Go module structure maintained (root + operator)
+- Backward compatible: ServiceMonitor and CronJob only created when enabled
+
+**Additional Updates (same session)**:
+
+- [x] Updated root Makefile with operator targets:
+  - `operator-build`, `operator-test`, `operator-lint`
+  - `operator-manifests`, `operator-generate`
+  - `operator-docker-build`, `operator-docker-push`, `operator-docker-buildx`
+  - `operator-install`, `operator-uninstall`, `operator-deploy`, `operator-undeploy`
+  - `operator-run`, `operator-clean`, `operator-all`
+- [x] Created GitHub Actions workflow for operator CI/CD (`.github/workflows/operator.yml`):
+  - Lint, test, build jobs
+  - Generated code verification
+  - Docker multi-arch build and push (on main branch)
+  - Security scan with Trivy
+- [x] Updated CI workflow with operator build check
+- [x] Updated documentation:
+  - README.md: Added Kubernetes Operator section and project structure
+  - llm.txt: Added operator enhancements (ServiceMonitor, CronJob)
+
+**Makefile Operator Targets**:
+
+| Target | Description |
+| --- | --- |
+| `operator-build` | Build operator binary |
+| `operator-test` | Run operator tests |
+| `operator-lint` | Run linter on operator |
+| `operator-manifests` | Generate CRD manifests |
+| `operator-generate` | Generate DeepCopy code |
+| `operator-docker-build` | Build operator Docker image |
+| `operator-docker-push` | Push operator image |
+| `operator-docker-buildx` | Multi-arch build and push |
+| `operator-install` | Install CRDs to cluster |
+| `operator-uninstall` | Remove CRDs from cluster |
+| `operator-deploy` | Deploy operator |
+| `operator-undeploy` | Undeploy operator |
+| `operator-run` | Run operator locally |
+| `operator-clean` | Clean build artifacts |
+| `operator-all` | Build and test |
 
 ---
 

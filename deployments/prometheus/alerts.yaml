@@ -275,3 +275,121 @@ groups:
         annotations:
           summary: "High authorization failure rate"
           description: "{{ $value }} authorization failures per second. Check API key scopes and permissions."
+
+  - name: maia_replication_alerts
+    rules:
+      # Replication Lag Alerts
+      - alert: MAIAReplicationLagWarning
+        expr: maia_replication_lag_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Replication lag warning for follower {{ $labels.follower_id }}"
+          description: "Follower {{ $labels.follower_id }} in region {{ $labels.region }} has {{ $value | humanizeDuration }} replication lag."
+
+      - alert: MAIAReplicationLagCritical
+        expr: maia_replication_lag_seconds > 60
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical replication lag for follower {{ $labels.follower_id }}"
+          description: "Follower {{ $labels.follower_id }} in region {{ $labels.region }} has {{ $value | humanizeDuration }} replication lag. Data consistency at risk."
+
+      # Follower Connection Alerts
+      - alert: MAIAFollowerDisconnected
+        expr: maia_replication_follower_health == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Follower {{ $labels.follower_id }} disconnected"
+          description: "Follower {{ $labels.follower_id }} in region {{ $labels.region }} is disconnected from the leader."
+
+      - alert: MAIAFollowerDisconnectedLong
+        expr: maia_replication_follower_health == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Follower {{ $labels.follower_id }} disconnected for extended period"
+          description: "Follower {{ $labels.follower_id }} in region {{ $labels.region }} has been disconnected for more than 5 minutes. Manual intervention may be required."
+
+      - alert: MAIALeaderDisconnected
+        expr: maia_replication_leader_connected == 0
+        for: 1m
+        labels:
+          severity: critical
+          pager: "true"
+        annotations:
+          summary: "Follower lost connection to leader"
+          description: "This follower instance has lost connection to the leader. Failover may be required."
+
+      # Conflict Alerts
+      - alert: MAIAHighConflictRate
+        expr: sum(rate(maia_replication_conflicts_total[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High replication conflict rate"
+          description: "{{ $value }} conflicts per second being resolved. Check for network partitions or clock skew."
+
+      # WAL Alerts
+      - alert: MAIAWALGrowthHigh
+        expr: maia_wal_size_bytes > 1073741824  # 1GB
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WAL size is large"
+          description: "Write-Ahead Log is {{ $value | humanize1024 }}. Consider truncating old entries or investigating replication issues."
+
+      - alert: MAIAWALGrowthCritical
+        expr: maia_wal_size_bytes > 5368709120  # 5GB
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WAL size is critical"
+          description: "Write-Ahead Log is {{ $value | humanize1024 }}. Immediate action required to prevent disk exhaustion."
+
+      # Replication Error Alerts
+      - alert: MAIAReplicationErrors
+        expr: sum(rate(maia_replication_errors_total[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Replication errors detected"
+          description: "{{ $value }} replication errors per second. Type: {{ $labels.type }}, Region: {{ $labels.region }}"
+
+      # Migration Alerts
+      - alert: MAIAMigrationStuck
+        expr: maia_migrations_in_progress > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Migration in progress for extended period"
+          description: "A tenant migration has been running for more than 10 minutes. Check migration status."
+
+      - alert: MAIAMigrationFailed
+        expr: increase(maia_migrations_total{status="failed"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant migration failed"
+          description: "A migration from {{ $labels.from_region }} to {{ $labels.to_region }} has failed."
+
+      # Follower Health
+      - alert: MAIANoFollowersConnected
+        expr: maia_replication_followers_connected == 0 and maia_replication_position{role="leader"} > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No followers connected to leader"
+          description: "The leader has no connected followers. Data redundancy is compromised."

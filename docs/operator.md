@@ -13,6 +13,8 @@ The operator manages two custom resources:
 
 - **Declarative Configuration**: Define MAIA deployments as Kubernetes resources
 - **Automatic Resource Management**: Creates Deployments, Services, ConfigMaps, PVCs, Ingresses
+- **Prometheus Integration**: Automatically creates ServiceMonitor for Prometheus scraping
+- **Automated Backups**: Creates CronJobs for scheduled backups with compression and retention
 - **Tenant Lifecycle**: Create, update, suspend, and delete tenants via the MAIA Admin API
 - **API Key Provisioning**: Automatically creates API keys and stores them in Kubernetes Secrets
 - **Status Tracking**: Rich status updates with conditions and metrics
@@ -361,6 +363,129 @@ spec:
     secretRef:
       name: enterprise-readonly-key
     scopes: ["read", "search"]
+```
+
+## Prometheus Integration
+
+When `metrics.serviceMonitor.enabled` is set to `true`, the operator automatically creates a ServiceMonitor resource for Prometheus to scrape MAIA metrics.
+
+### ServiceMonitor Prerequisites
+
+- Prometheus Operator installed (provides ServiceMonitor CRD)
+- Prometheus configured to discover ServiceMonitors
+
+### ServiceMonitor Configuration
+
+```yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia
+spec:
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      labels:
+        release: prometheus  # Match your Prometheus selector
+```
+
+### Verifying ServiceMonitor Creation
+
+```bash
+# Check ServiceMonitor was created
+kubectl get servicemonitor maia
+
+# Verify Prometheus is scraping
+kubectl port-forward -n monitoring svc/prometheus 9090:9090
+# Visit http://localhost:9090/targets and look for MAIA
+```
+
+The ServiceMonitor is automatically configured to:
+
+- Scrape the `/metrics` endpoint on the `http` port
+- Use the configured scrape interval (default: 30s)
+- Include labels from `spec.metrics.serviceMonitor.labels`
+
+## Automated Backups
+
+When `backup.enabled` is set to `true`, the operator creates a CronJob that performs scheduled backups of MAIA data.
+
+### Backup Features
+
+- **Scheduled execution**: Configurable cron schedule (default: `0 2 * * *` - 2 AM daily)
+- **Compression**: Optional gzip compression (enabled by default)
+- **Retention policy**: Automatic cleanup of old backups
+- **Dedicated storage**: Separate PVC for backup data
+
+### Backup Configuration
+
+```yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia
+spec:
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"     # 2 AM daily
+    retentionDays: 30         # Keep backups for 30 days
+    storageSize: "20Gi"       # Backup PVC size
+    compress: true            # Enable gzip compression
+```
+
+### Verifying Backups
+
+```bash
+# Check CronJob was created
+kubectl get cronjob maia-backup
+
+# View backup history
+kubectl get jobs -l app.kubernetes.io/component=backup
+
+# Check backup logs
+kubectl logs job/maia-backup-<timestamp>
+
+# List backup files
+kubectl exec -it maia-0 -- ls -la /backup
+```
+
+### Backup Storage
+
+Backups are stored in a dedicated PVC:
+
+- **Name**: `<instance-name>-backup`
+- **Size**: Configured via `backup.storageSize`
+- **Path**: `/backup` in the backup job container
+- **Format**: `backup-YYYYMMDD-HHMMSS.tar.gz` (compressed) or `backup-YYYYMMDD-HHMMSS.tar`
+
+### Retention
+
+The backup job automatically removes backups older than `retentionDays`:
+
+```bash
+# Backups older than retention period are deleted
+find /backup -name "backup-*.tar*" -mtime +30 -delete
+```
+
+### Manual Backup
+
+To trigger a manual backup:
+
+```bash
+kubectl create job --from=cronjob/maia-backup maia-backup-manual
+```
+
+### Restoring from Backup
+
+```bash
+# Copy backup to local machine
+kubectl cp maia-backup-pod:/backup/backup-20250121-020000.tar.gz ./backup.tar.gz
+
+# Extract and restore
+tar -xzf backup.tar.gz
+# Follow MAIA restore documentation
 ```
 
 ## Troubleshooting

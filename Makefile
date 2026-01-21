@@ -8,7 +8,10 @@
 	install uninstall run-example-basic run-example-proxy run-example-multi-agent \
 	build-linux build-darwin build-windows build-all-platforms \
 	helm-lint helm-template helm-package backup restore \
-	k8s-crds-install k8s-crds-uninstall
+	k8s-crds-install k8s-crds-uninstall \
+	operator-build operator-test operator-lint operator-manifests operator-generate \
+	operator-docker-build operator-docker-push operator-deploy operator-undeploy \
+	operator-install operator-uninstall operator-run operator-clean
 
 # Go parameters
 GOCMD := go
@@ -99,6 +102,9 @@ help:
 	@echo ""
 	@echo "$(YELLOW)Kubernetes CRD Targets:$(NC)"
 	@grep -E '^## k8s' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
+	@echo ""
+	@echo "$(YELLOW)Operator Targets:$(NC)"
+	@grep -E '^## operator' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
 	@echo ""
 	@echo "$(YELLOW)Backup/Restore Targets:$(NC)"
 	@grep -E '^## (backup|restore)' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
@@ -530,6 +536,101 @@ backup-list:
 	@ls -lh ./backups/*.tar* 2>/dev/null || echo "  No backups found in ./backups/"
 
 #=============================================================================
+# Kubernetes Operator Targets
+#=============================================================================
+
+# Operator variables
+OPERATOR_DIR := ./operator
+OPERATOR_IMG ?= ghcr.io/ar4mirez/maia-operator:$(VERSION)
+
+## operator-build: Build the Kubernetes operator binary
+operator-build:
+	@echo "$(BLUE)Building MAIA operator...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) build
+	@echo "$(GREEN)✓ Operator built successfully$(NC)"
+
+## operator-test: Run operator tests
+operator-test:
+	@echo "$(BLUE)Running operator tests...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) test
+	@echo "$(GREEN)✓ Operator tests passed$(NC)"
+
+## operator-lint: Run linter on operator code
+operator-lint:
+	@echo "$(BLUE)Linting operator code...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) lint
+	@echo "$(GREEN)✓ Operator linting passed$(NC)"
+
+## operator-manifests: Generate operator CRD manifests
+operator-manifests:
+	@echo "$(BLUE)Generating operator manifests...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) manifests
+	@echo "$(GREEN)✓ Operator manifests generated$(NC)"
+
+## operator-generate: Generate operator DeepCopy code
+operator-generate:
+	@echo "$(BLUE)Generating operator code...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) generate
+	@echo "$(GREEN)✓ Operator code generated$(NC)"
+
+## operator-docker-build: Build operator Docker image
+operator-docker-build:
+	@echo "$(BLUE)Building operator Docker image...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) docker-build IMG=$(OPERATOR_IMG)
+	@echo "$(GREEN)✓ Operator image built: $(OPERATOR_IMG)$(NC)"
+
+## operator-docker-push: Push operator Docker image to registry
+operator-docker-push:
+	@echo "$(BLUE)Pushing operator Docker image...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) docker-push IMG=$(OPERATOR_IMG)
+	@echo "$(GREEN)✓ Operator image pushed$(NC)"
+
+## operator-docker-buildx: Build and push multi-arch operator image
+operator-docker-buildx:
+	@echo "$(BLUE)Building multi-arch operator Docker image...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) docker-buildx IMG=$(OPERATOR_IMG)
+	@echo "$(GREEN)✓ Multi-arch operator image pushed$(NC)"
+
+## operator-install: Install operator CRDs to cluster
+operator-install:
+	@echo "$(BLUE)Installing operator CRDs...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) install
+	@echo "$(GREEN)✓ Operator CRDs installed$(NC)"
+
+## operator-uninstall: Uninstall operator CRDs from cluster
+operator-uninstall:
+	@echo "$(BLUE)Uninstalling operator CRDs...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) uninstall
+	@echo "$(GREEN)✓ Operator CRDs uninstalled$(NC)"
+
+## operator-deploy: Deploy operator to cluster
+operator-deploy:
+	@echo "$(BLUE)Deploying operator...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) deploy
+	@echo "$(GREEN)✓ Operator deployed$(NC)"
+
+## operator-undeploy: Undeploy operator from cluster
+operator-undeploy:
+	@echo "$(BLUE)Undeploying operator...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) undeploy
+	@echo "$(GREEN)✓ Operator undeployed$(NC)"
+
+## operator-run: Run operator locally (outside cluster)
+operator-run:
+	@echo "$(BLUE)Running operator locally...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) run
+
+## operator-clean: Clean operator build artifacts
+operator-clean:
+	@echo "$(BLUE)Cleaning operator artifacts...$(NC)"
+	cd $(OPERATOR_DIR) && $(MAKE) clean
+	@echo "$(GREEN)✓ Operator artifacts cleaned$(NC)"
+
+## operator-all: Build and test operator
+operator-all: operator-manifests operator-generate operator-build operator-test
+	@echo "$(GREEN)✓ Operator build and test complete$(NC)"
+
+#=============================================================================
 # Cleanup Targets
 #=============================================================================
 
@@ -542,8 +643,8 @@ clean:
 	@rm -rf ./data/test-*
 	@echo "$(GREEN)✓ Clean complete$(NC)"
 
-## clean-all: Clean everything including root binaries and cache
-clean-all: clean
+## clean-all: Clean everything including root binaries, cache, and operator
+clean-all: clean operator-clean
 	@echo "$(BLUE)Cleaning root binaries and cache...$(NC)"
 	@rm -f ./maia ./maiactl ./maia-mcp ./mcp-server ./migrate ./maia-migrate
 	@rm -f ./basic-usage ./proxy-usage ./multi-agent

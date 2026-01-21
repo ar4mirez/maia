@@ -60,6 +60,12 @@ type Metrics struct {
 	WALSizeBytes                prometheus.Gauge
 	FollowersConnected          prometheus.Gauge
 	LeaderConnected             prometheus.Gauge
+
+	// Migration metrics
+	MigrationDuration     *prometheus.HistogramVec
+	MigrationTotal        *prometheus.CounterVec
+	MigrationInProgress   prometheus.Gauge
+	FollowerHealthStatus  *prometheus.GaugeVec
 }
 
 // New creates a new Metrics instance with all metrics registered.
@@ -365,6 +371,40 @@ func New(namespace string) *Metrics {
 				Help:      "Whether connected to leader (follower only, 1=connected, 0=disconnected)",
 			},
 		),
+
+		// Migration metrics
+		MigrationDuration: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Namespace: namespace,
+				Name:      "migration_duration_seconds",
+				Help:      "Duration of tenant migrations in seconds",
+				Buckets:   []float64{1, 5, 10, 30, 60, 120, 300, 600},
+			},
+			[]string{"from_region", "to_region", "status"},
+		),
+		MigrationTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "migrations_total",
+				Help:      "Total number of tenant migrations",
+			},
+			[]string{"from_region", "to_region", "status"},
+		),
+		MigrationInProgress: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "migrations_in_progress",
+				Help:      "Number of migrations currently in progress",
+			},
+		),
+		FollowerHealthStatus: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "replication_follower_health",
+				Help:      "Health status of followers (1=healthy, 0=unhealthy)",
+			},
+			[]string{"follower_id", "region"},
+		),
 	}
 
 	return m
@@ -552,5 +592,25 @@ func (m *Metrics) SetLeaderConnected(connected bool) {
 		m.LeaderConnected.Set(1)
 	} else {
 		m.LeaderConnected.Set(0)
+	}
+}
+
+// RecordMigration records a completed migration.
+func (m *Metrics) RecordMigration(fromRegion, toRegion, status string, durationSeconds float64) {
+	m.MigrationDuration.WithLabelValues(fromRegion, toRegion, status).Observe(durationSeconds)
+	m.MigrationTotal.WithLabelValues(fromRegion, toRegion, status).Inc()
+}
+
+// SetMigrationsInProgress sets the number of in-progress migrations.
+func (m *Metrics) SetMigrationsInProgress(count int) {
+	m.MigrationInProgress.Set(float64(count))
+}
+
+// SetFollowerHealth sets the health status of a follower.
+func (m *Metrics) SetFollowerHealth(followerID, region string, healthy bool) {
+	if healthy {
+		m.FollowerHealthStatus.WithLabelValues(followerID, region).Set(1)
+	} else {
+		m.FollowerHealthStatus.WithLabelValues(followerID, region).Set(0)
 	}
 }

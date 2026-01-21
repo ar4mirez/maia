@@ -392,6 +392,8 @@ Supported providers: Ollama, OpenRouter, Anthropic
 - Controller-runtime v0.23.0 (Kubernetes 1.35+ compatible)
 - Declarative configuration via Custom Resources
 - Automatic resource management (Deployments, Services, ConfigMaps, PVCs, Ingresses)
+- Prometheus ServiceMonitor creation (when metrics.serviceMonitor.enabled)
+- Automated backup CronJobs (when backup.enabled)
 - Tenant lifecycle via MAIA Admin API
 - API key provisioning to Kubernetes Secrets
 - Status tracking with conditions
@@ -422,6 +424,17 @@ spec:
     enabled: true
   metrics:
     enabled: true
+    serviceMonitor:
+      enabled: true        # Auto-creates Prometheus ServiceMonitor
+      interval: 30s
+      labels:
+        release: prometheus
+  backup:
+    enabled: true          # Auto-creates backup CronJob
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    retentionDays: 30
+    storageSize: 20Gi
+    compress: true
 ```
 
 #### MaiaTenant Example
