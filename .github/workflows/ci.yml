@@ -189,7 +189,8 @@ jobs:
       - name: Validate CRD YAML syntax
         run: |
           # Verify YAML syntax using yq (kubectl dry-run requires a cluster)
-          for f in deployments/kubernetes/crds/*.yaml; do
+          # Only validate actual CRD files, not kustomization.yaml
+          for f in deployments/kubernetes/crds/maia.*.yaml; do
             echo "Validating YAML syntax: $f"
             yq e '.' "$f" > /dev/null || exit 1
             # Check CRD has required fields
