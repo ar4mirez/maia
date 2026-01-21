@@ -193,5 +193,11 @@ jobs:
 
       - name: Validate CRD syntax
         run: |
-          kubectl apply --dry-run=client -f deployments/kubernetes/crds/maia.cuemby.com_maiainstances.yaml
-          kubectl apply --dry-run=client -f deployments/kubernetes/crds/maia.cuemby.com_maiatenants.yaml
+          # Use --validate=false since dry-run=client still requires API server for OpenAPI validation
+          kubectl apply --dry-run=client --validate=false -f deployments/kubernetes/crds/maia.cuemby.com_maiainstances.yaml
+          kubectl apply --dry-run=client --validate=false -f deployments/kubernetes/crds/maia.cuemby.com_maiatenants.yaml
+          # Verify YAML syntax using yq
+          for f in deployments/kubernetes/crds/*.yaml; do
+            echo "Validating $f"
+            cat "$f" | yq e '.' > /dev/null || exit 1
+          done
