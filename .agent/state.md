@@ -1114,11 +1114,53 @@ System tenant creates memory in "default" namespace:
 
 ---
 
+### SESSION 25 (2026-01-20) - Server Handler Integration
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Added `tenantStore` field to Server struct
+- [x] TenantAwareStore auto-initialized when TenantManager is provided
+- [x] Added `getTenantID` helper method for extracting tenant from context
+- [x] Updated all memory handlers to use TenantAwareStore:
+  - createMemory, getMemory, updateMemory, deleteMemory, searchMemories
+- [x] Updated all namespace handlers to use TenantAwareStore:
+  - createNamespace, getNamespace, updateNamespace, deleteNamespace, listNamespaces, listNamespaceMemories
+- [x] All existing tests pass
+- [x] Linter clean
+- [x] Overall coverage: 75.2%
+
+**Key Changes**:
+
+- `internal/server/server.go` - Added tenantStore field, auto-initialization
+- `internal/server/handlers.go` - Updated all CRUD handlers with tenant isolation
+
+**Handler Pattern**:
+
+```go
+// All handlers now follow this pattern:
+if s.tenantStore != nil {
+    tenantID := s.getTenantID(c)
+    result, err = s.tenantStore.Operation(ctx, tenantID, input)
+} else {
+    result, err = s.store.Operation(ctx, input)
+}
+```
+
+**Notes**:
+
+- Backward compatible: handlers fall back to direct store access if tenantStore is nil
+- System tenant ID used as default when no tenant context is present
+- All existing tests pass without modification
+
+---
+
 ## Next Steps
 
 1. **Production Load Testing** - Test under production-like conditions with larger datasets
-2. **Search API with tenant context** - Update search endpoints to use TenantAwareStore
-3. **Dedicated Storage Implementation** - Implement lazy initialization of dedicated BadgerDB instances for premium tenants
+2. **Dedicated Storage Implementation** - Implement lazy initialization of dedicated BadgerDB instances for premium tenants
+3. **Tenant Middleware Integration** - Add tenant middleware to API routes
 
 ---
 

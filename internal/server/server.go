@@ -30,6 +30,7 @@ import (
 type Server struct {
 	cfg             *config.Config
 	store           storage.Store
+	tenantStore     *tenant.TenantAwareStore
 	tenants         tenant.Manager
 	logger          *zap.Logger
 	router          *gin.Engine
@@ -83,6 +84,11 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 		s.analyzer = deps.Analyzer
 		s.tenants = deps.TenantManager
 		s.inferenceRouter = deps.InferenceRouter
+	}
+
+	// Create TenantAwareStore if tenant manager is available
+	if s.tenants != nil {
+		s.tenantStore = tenant.NewTenantAwareStore(store, s.tenants)
 	}
 
 	// Create default analyzer if not provided

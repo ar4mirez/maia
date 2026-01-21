@@ -11,6 +11,7 @@ import (
 	mcontext "github.com/ar4mirez/maia/internal/context"
 	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
+	"github.com/ar4mirez/maia/internal/tenant"
 )
 
 // API request/response types
@@ -110,7 +111,7 @@ func (s *Server) createMemory(c *gin.Context) {
 	var req CreateMemoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
+			Error:   "invalid request body",
 			Details: err.Error(),
 		})
 		return
@@ -126,7 +127,17 @@ func (s *Server) createMemory(c *gin.Context) {
 		Source:     req.Source,
 	}
 
-	mem, err := s.store.CreateMemory(c.Request.Context(), input)
+	var mem *storage.Memory
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		mem, err = s.tenantStore.CreateMemory(c.Request.Context(), tenantID, input)
+	} else {
+		mem, err = s.store.CreateMemory(c.Request.Context(), input)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -138,14 +149,27 @@ func (s *Server) createMemory(c *gin.Context) {
 func (s *Server) getMemory(c *gin.Context) {
 	id := c.Param("id")
 
-	mem, err := s.store.GetMemory(c.Request.Context(), id)
+	var mem *storage.Memory
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		mem, err = s.tenantStore.GetMemory(c.Request.Context(), tenantID, id)
+		if err == nil {
+			_ = s.tenantStore.TouchMemory(c.Request.Context(), tenantID, id)
+		}
+	} else {
+		mem, err = s.store.GetMemory(c.Request.Context(), id)
+		if err == nil {
+			_ = s.store.TouchMemory(c.Request.Context(), id)
+		}
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
 	}
-
-	// Update access time
-	_ = s.store.TouchMemory(c.Request.Context(), id)
 
 	c.JSON(http.StatusOK, mem)
 }
@@ -156,7 +180,7 @@ func (s *Server) updateMemory(c *gin.Context) {
 	var req UpdateMemoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
+			Error:   "invalid request body",
 			Details: err.Error(),
 		})
 		return
@@ -169,7 +193,17 @@ func (s *Server) updateMemory(c *gin.Context) {
 		Confidence: req.Confidence,
 	}
 
-	mem, err := s.store.UpdateMemory(c.Request.Context(), id, input)
+	var mem *storage.Memory
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		mem, err = s.tenantStore.UpdateMemory(c.Request.Context(), tenantID, id, input)
+	} else {
+		mem, err = s.store.UpdateMemory(c.Request.Context(), id, input)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -181,7 +215,17 @@ func (s *Server) updateMemory(c *gin.Context) {
 func (s *Server) deleteMemory(c *gin.Context) {
 	id := c.Param("id")
 
-	if err := s.store.DeleteMemory(c.Request.Context(), id); err != nil {
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		err = s.tenantStore.DeleteMemory(c.Request.Context(), tenantID, id)
+	} else {
+		err = s.store.DeleteMemory(c.Request.Context(), id)
+	}
+
+	if err != nil {
 		s.handleStorageError(c, err)
 		return
 	}
@@ -193,7 +237,7 @@ func (s *Server) searchMemories(c *gin.Context) {
 	var req SearchMemoriesRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
+			Error:   "invalid request body",
 			Details: err.Error(),
 		})
 		return
@@ -215,7 +259,17 @@ func (s *Server) searchMemories(c *gin.Context) {
 		Offset:    req.Offset,
 	}
 
-	results, err := s.store.SearchMemories(c.Request.Context(), opts)
+	var results []*storage.SearchResult
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		results, err = s.tenantStore.SearchMemories(c.Request.Context(), tenantID, opts)
+	} else {
+		results, err = s.store.SearchMemories(c.Request.Context(), opts)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -235,7 +289,7 @@ func (s *Server) createNamespace(c *gin.Context) {
 	var req CreateNamespaceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
+			Error:   "invalid request body",
 			Details: err.Error(),
 		})
 		return
@@ -248,7 +302,17 @@ func (s *Server) createNamespace(c *gin.Context) {
 		Config:   req.Config,
 	}
 
-	ns, err := s.store.CreateNamespace(c.Request.Context(), input)
+	var ns *storage.Namespace
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		ns, err = s.tenantStore.CreateNamespace(c.Request.Context(), tenantID, input)
+	} else {
+		ns, err = s.store.CreateNamespace(c.Request.Context(), input)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -260,21 +324,36 @@ func (s *Server) createNamespace(c *gin.Context) {
 func (s *Server) getNamespace(c *gin.Context) {
 	id := c.Param("id")
 
-	// Try to get by ID first, then by name
-	ns, err := s.store.GetNamespace(c.Request.Context(), id)
-	if err != nil {
-		var notFound *storage.ErrNotFound
-		if errors.As(err, &notFound) {
-			// Try by name
-			ns, err = s.store.GetNamespaceByName(c.Request.Context(), id)
-			if err != nil {
-				s.handleStorageError(c, err)
-				return
+	var ns *storage.Namespace
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		// Try to get by ID first, then by name
+		ns, err = s.tenantStore.GetNamespace(c.Request.Context(), tenantID, id)
+		if err != nil {
+			var notFound *storage.ErrNotFound
+			if errors.As(err, &notFound) {
+				// Try by name
+				ns, err = s.tenantStore.GetNamespaceByName(c.Request.Context(), tenantID, id)
 			}
-		} else {
-			s.handleStorageError(c, err)
-			return
 		}
+	} else {
+		// Try to get by ID first, then by name
+		ns, err = s.store.GetNamespace(c.Request.Context(), id)
+		if err != nil {
+			var notFound *storage.ErrNotFound
+			if errors.As(err, &notFound) {
+				// Try by name
+				ns, err = s.store.GetNamespaceByName(c.Request.Context(), id)
+			}
+		}
+	}
+
+	if err != nil {
+		s.handleStorageError(c, err)
+		return
 	}
 
 	c.JSON(http.StatusOK, ns)
@@ -286,13 +365,23 @@ func (s *Server) updateNamespace(c *gin.Context) {
 	var req UpdateNamespaceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: "invalid request body",
+			Error:   "invalid request body",
 			Details: err.Error(),
 		})
 		return
 	}
 
-	ns, err := s.store.UpdateNamespace(c.Request.Context(), id, &req.Config)
+	var ns *storage.Namespace
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		ns, err = s.tenantStore.UpdateNamespace(c.Request.Context(), tenantID, id, &req.Config)
+	} else {
+		ns, err = s.store.UpdateNamespace(c.Request.Context(), id, &req.Config)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -304,7 +393,17 @@ func (s *Server) updateNamespace(c *gin.Context) {
 func (s *Server) deleteNamespace(c *gin.Context) {
 	id := c.Param("id")
 
-	if err := s.store.DeleteNamespace(c.Request.Context(), id); err != nil {
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		err = s.tenantStore.DeleteNamespace(c.Request.Context(), tenantID, id)
+	} else {
+		err = s.store.DeleteNamespace(c.Request.Context(), id)
+	}
+
+	if err != nil {
 		s.handleStorageError(c, err)
 		return
 	}
@@ -325,7 +424,17 @@ func (s *Server) listNamespaces(c *gin.Context) {
 		Offset: offset,
 	}
 
-	namespaces, err := s.store.ListNamespaces(c.Request.Context(), opts)
+	var namespaces []*storage.Namespace
+	var err error
+
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		namespaces, err = s.tenantStore.ListNamespaces(c.Request.Context(), tenantID, opts)
+	} else {
+		namespaces, err = s.store.ListNamespaces(c.Request.Context(), opts)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -348,28 +457,47 @@ func (s *Server) listNamespaceMemories(c *gin.Context) {
 		limit = 1000
 	}
 
-	// Get namespace first to verify it exists
-	ns, err := s.store.GetNamespace(c.Request.Context(), id)
-	if err != nil {
-		var notFound *storage.ErrNotFound
-		if errors.As(err, &notFound) {
-			ns, err = s.store.GetNamespaceByName(c.Request.Context(), id)
-			if err != nil {
-				s.handleStorageError(c, err)
-				return
-			}
-		} else {
-			s.handleStorageError(c, err)
-			return
-		}
-	}
+	var ns *storage.Namespace
+	var memories []*storage.Memory
+	var err error
 
 	opts := &storage.ListOptions{
 		Limit:  limit,
 		Offset: offset,
 	}
 
-	memories, err := s.store.ListMemories(c.Request.Context(), ns.Name, opts)
+	// Use tenant-aware store if available
+	if s.tenantStore != nil {
+		tenantID := s.getTenantID(c)
+		// Get namespace first to verify it exists
+		ns, err = s.tenantStore.GetNamespace(c.Request.Context(), tenantID, id)
+		if err != nil {
+			var notFound *storage.ErrNotFound
+			if errors.As(err, &notFound) {
+				ns, err = s.tenantStore.GetNamespaceByName(c.Request.Context(), tenantID, id)
+			}
+		}
+		if err != nil {
+			s.handleStorageError(c, err)
+			return
+		}
+		memories, err = s.tenantStore.ListMemories(c.Request.Context(), tenantID, ns.Name, opts)
+	} else {
+		// Get namespace first to verify it exists
+		ns, err = s.store.GetNamespace(c.Request.Context(), id)
+		if err != nil {
+			var notFound *storage.ErrNotFound
+			if errors.As(err, &notFound) {
+				ns, err = s.store.GetNamespaceByName(c.Request.Context(), id)
+			}
+		}
+		if err != nil {
+			s.handleStorageError(c, err)
+			return
+		}
+		memories, err = s.store.ListMemories(c.Request.Context(), ns.Name, opts)
+	}
+
 	if err != nil {
 		s.handleStorageError(c, err)
 		return
@@ -816,4 +944,14 @@ func (s *Server) clearInferenceCache(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "cache cleared",
 	})
+}
+
+// getTenantID extracts the tenant ID from the Gin context.
+// Returns the system tenant ID if no tenant is set (for backward compatibility).
+func (s *Server) getTenantID(c *gin.Context) string {
+	tenantID := tenant.GetTenantID(c)
+	if tenantID == "" {
+		return tenant.SystemTenantID
+	}
+	return tenantID
 }
