@@ -39,6 +39,7 @@ services:
       - "9091:9090"
     volumes:
       - ./deployments/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./deployments/prometheus/alerts.yaml:/etc/prometheus/alerts.yaml:ro
       - prometheus-data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -64,6 +65,9 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./deployments/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deployments/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deployments/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - maia-network
     profiles:

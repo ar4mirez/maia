@@ -11,9 +11,34 @@ info:
     - Header: `Authorization: Bearer your-api-key`
     - Query parameter: `?api_key=your-api-key`
 
+    ## Scopes
+
+    API keys can be restricted to specific operations using scopes. Available scopes:
+
+    | Scope | Description |
+    |-------|-------------|
+    | `*` | Full access (wildcard) |
+    | `read` | Read memories and namespaces |
+    | `write` | Create and update memories and namespaces |
+    | `delete` | Delete memories and namespaces |
+    | `search` | Search operations |
+    | `context` | Context assembly operations |
+    | `inference` | Inference operations |
+    | `stats` | View statistics and metrics |
+    | `admin` | Administrative operations (tenant/API key management) |
+
+    API keys with no scopes (empty) are granted full access for backward compatibility.
+
+    When a request lacks the required scope, a `403 Forbidden` response is returned with code `INSUFFICIENT_SCOPE`.
+
     ## Rate Limiting
 
     API requests are rate limited. When you exceed the limit, you'll receive a `429 Too Many Requests` response.
+
+    ## Multi-Tenancy
+
+    MAIA supports multi-tenancy with tenant isolation. Use the `X-MAIA-Tenant-ID` header to specify
+    the tenant, or let the system identify the tenant from your API key.
 
   version: 1.0.0
   license:
@@ -38,6 +63,10 @@ tags:
     description: Context assembly operations
   - name: system
     description: System operations
+  - name: admin
+    description: Administrative operations (tenant and API key management)
+  - name: inference
+    description: Inference operations
 
 paths:
   /health:
@@ -112,6 +141,8 @@ paths:
       operationId: createMemory
       tags:
         - memories
+      x-required-scopes:
+        - write
       requestBody:
         required: true
         content:
@@ -137,6 +168,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
 
   /v1/memories/{id}:
     get:
@@ -413,6 +450,9 @@ paths:
       operationId: getStats
       tags:
         - system
+      x-required-scopes:
+        - stats
+        - read
       responses:
         '200':
           description: System statistics
@@ -420,6 +460,380 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatsResponse'
+
+  # Admin API endpoints
+  /admin/tenants:
+    post:
+      summary: Create a tenant
+      description: Creates a new tenant (requires admin scope)
+      operationId: createTenant
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        '201':
+          description: Tenant created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '409':
+          description: Tenant already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      summary: List tenants
+      description: Returns a list of all tenants (requires admin scope)
+      operationId: listTenants
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TenantStatus'
+        - name: plan
+          in: query
+          schema:
+            $ref: '#/components/schemas/TenantPlan'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of tenants
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListTenantsResponse'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+
+  /admin/tenants/{id}:
+    get:
+      summary: Get a tenant
+      description: Retrieves a tenant by ID (requires admin scope)
+      operationId: getTenant
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Tenant retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      summary: Update a tenant
+      description: Updates an existing tenant (requires admin scope)
+      operationId: updateTenant
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        '200':
+          description: Tenant updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      summary: Delete a tenant
+      description: Deletes a tenant (requires admin scope)
+      operationId: deleteTenant
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '204':
+          description: Tenant deleted successfully
+        '403':
+          description: Insufficient scope or system tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/tenants/{id}/usage:
+    get:
+      summary: Get tenant usage
+      description: Returns usage statistics for a tenant (requires admin scope)
+      operationId: getTenantUsage
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Tenant usage statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantUsage'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/tenants/{id}/suspend:
+    post:
+      summary: Suspend a tenant
+      description: Suspends a tenant (requires admin scope)
+      operationId: suspendTenant
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Tenant suspended successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '403':
+          description: Insufficient scope or system tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/tenants/{id}/activate:
+    post:
+      summary: Activate a tenant
+      description: Activates a suspended tenant (requires admin scope)
+      operationId: activateTenant
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: Tenant activated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/tenants/{id}/apikeys:
+    post:
+      summary: Create an API key
+      description: Creates a new API key for a tenant (requires admin scope)
+      operationId: createAPIKey
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '201':
+          description: API key created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateAPIKeyResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    get:
+      summary: List API keys
+      description: Lists all API keys for a tenant (requires admin scope)
+      operationId: listAPIKeys
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - $ref: '#/components/parameters/TenantId'
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAPIKeysResponse'
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /admin/apikeys/{key}:
+    delete:
+      summary: Revoke an API key
+      description: Revokes an API key (requires admin scope)
+      operationId: revokeAPIKey
+      tags:
+        - admin
+      x-required-scopes:
+        - admin
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: API key hash
+          schema:
+            type: string
+      responses:
+        '204':
+          description: API key revoked successfully
+        '403':
+          description: Insufficient scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScopeError'
+        '404':
+          description: API key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
 components:
   securitySchemes:
@@ -446,6 +860,14 @@ components:
       in: path
       required: true
       description: Namespace ID or name
+      schema:
+        type: string
+
+    TenantId:
+      name: id
+      in: path
+      required: true
+      description: Tenant ID
       schema:
         type: string
 
@@ -794,6 +1216,363 @@ components:
           description: Additional details
       required:
         - error
+
+    ScopeError:
+      type: object
+      description: Error returned when API key lacks required scope
+      properties:
+        error:
+          type: string
+          example: "insufficient scope"
+        code:
+          type: string
+          example: "INSUFFICIENT_SCOPE"
+        required:
+          type: array
+          items:
+            type: string
+          description: Scopes that would grant access (any one is sufficient)
+          example: ["write", "*"]
+        provided:
+          type: array
+          items:
+            type: string
+          description: Scopes the API key has
+          example: ["read"]
+      required:
+        - error
+        - code
+        - required
+        - provided
+
+    TenantStatus:
+      type: string
+      description: Current status of the tenant
+      enum:
+        - active
+        - suspended
+        - pending_deletion
+      example: "active"
+
+    TenantPlan:
+      type: string
+      description: Tenant subscription plan
+      enum:
+        - free
+        - starter
+        - professional
+        - enterprise
+      example: "starter"
+
+    TenantQuotas:
+      type: object
+      description: Resource quotas for the tenant
+      properties:
+        max_memories:
+          type: integer
+          format: int64
+          description: Maximum number of memories (0 = unlimited)
+          example: 10000
+        max_storage_bytes:
+          type: integer
+          format: int64
+          description: Maximum storage in bytes (0 = unlimited)
+          example: 1073741824
+        max_namespaces:
+          type: integer
+          description: Maximum number of namespaces (0 = unlimited)
+          example: 100
+        max_api_keys:
+          type: integer
+          description: Maximum number of API keys (0 = unlimited)
+          example: 10
+        requests_per_minute:
+          type: integer
+          description: Rate limit for requests per minute (0 = unlimited)
+          example: 1000
+
+    TenantConfig:
+      type: object
+      description: Tenant-specific configuration
+      properties:
+        default_namespace:
+          type: string
+          description: Default namespace for memories
+          example: "default"
+        retention_days:
+          type: integer
+          description: Default memory retention period in days (0 = forever)
+          example: 365
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+          description: Feature flags for the tenant
+          example:
+            inference_enabled: true
+            advanced_search: true
+
+    TenantUsage:
+      type: object
+      description: Current resource usage for the tenant
+      properties:
+        memory_count:
+          type: integer
+          format: int64
+          description: Current number of memories
+          example: 5432
+        storage_bytes:
+          type: integer
+          format: int64
+          description: Current storage usage in bytes
+          example: 536870912
+        namespace_count:
+          type: integer
+          description: Current number of namespaces
+          example: 12
+        api_key_count:
+          type: integer
+          description: Current number of API keys
+          example: 3
+        last_updated:
+          type: string
+          format: date-time
+          description: When usage was last calculated
+          example: "2024-01-15T10:30:00Z"
+
+    Tenant:
+      type: object
+      description: A tenant in the multi-tenant MAIA system
+      properties:
+        id:
+          type: string
+          description: Unique tenant identifier
+          example: "tenant_abc123"
+        name:
+          type: string
+          description: Human-readable tenant name
+          example: "Acme Corporation"
+        status:
+          $ref: '#/components/schemas/TenantStatus'
+        plan:
+          $ref: '#/components/schemas/TenantPlan'
+        quotas:
+          $ref: '#/components/schemas/TenantQuotas'
+        config:
+          $ref: '#/components/schemas/TenantConfig'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Custom metadata for the tenant
+          example:
+            contact_email: "admin@acme.com"
+            billing_id: "cus_xyz789"
+        created_at:
+          type: string
+          format: date-time
+          description: When the tenant was created
+          example: "2024-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: When the tenant was last updated
+          example: "2024-01-15T10:30:00Z"
+      required:
+        - id
+        - name
+        - status
+        - plan
+
+    CreateTenantRequest:
+      type: object
+      description: Request to create a new tenant
+      properties:
+        name:
+          type: string
+          description: Human-readable tenant name
+          minLength: 1
+          maxLength: 255
+          example: "Acme Corporation"
+        plan:
+          $ref: '#/components/schemas/TenantPlan'
+        quotas:
+          $ref: '#/components/schemas/TenantQuotas'
+        config:
+          $ref: '#/components/schemas/TenantConfig'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Custom metadata for the tenant
+      required:
+        - name
+
+    UpdateTenantRequest:
+      type: object
+      description: Request to update a tenant
+      properties:
+        name:
+          type: string
+          description: Human-readable tenant name
+          minLength: 1
+          maxLength: 255
+        plan:
+          $ref: '#/components/schemas/TenantPlan'
+        quotas:
+          $ref: '#/components/schemas/TenantQuotas'
+        config:
+          $ref: '#/components/schemas/TenantConfig'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: Custom metadata for the tenant
+
+    ListTenantsResponse:
+      type: object
+      description: Response for listing tenants
+      properties:
+        tenants:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tenant'
+        total:
+          type: integer
+          description: Total number of tenants
+          example: 42
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        page_size:
+          type: integer
+          description: Number of items per page
+          example: 20
+
+    APIKeyScope:
+      type: string
+      description: |
+        Permission scope for API key. Available scopes:
+        - `*`: Full access to all operations
+        - `read`: Read memories and namespaces
+        - `write`: Create and update memories and namespaces
+        - `delete`: Delete memories and namespaces
+        - `search`: Search memories
+        - `context`: Assemble context from memories
+        - `inference`: Use LLM inference endpoints
+        - `stats`: View statistics and usage
+        - `admin`: Administrative operations (tenant management)
+      enum:
+        - "*"
+        - read
+        - write
+        - delete
+        - search
+        - context
+        - inference
+        - stats
+        - admin
+      example: "read"
+
+    APIKey:
+      type: object
+      description: An API key for authenticating with MAIA
+      properties:
+        id:
+          type: string
+          description: Unique key identifier
+          example: "key_abc123"
+        tenant_id:
+          type: string
+          description: Tenant this key belongs to
+          example: "tenant_abc123"
+        name:
+          type: string
+          description: Human-readable key name
+          example: "Production API Key"
+        key_prefix:
+          type: string
+          description: First few characters of the key (for identification)
+          example: "maia_abc..."
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyScope'
+          description: Permission scopes granted to this key
+          example: ["read", "write", "search"]
+        expires_at:
+          type: string
+          format: date-time
+          description: When the key expires (null = never)
+          example: "2025-01-01T00:00:00Z"
+        last_used_at:
+          type: string
+          format: date-time
+          description: When the key was last used
+          example: "2024-01-15T10:30:00Z"
+        created_at:
+          type: string
+          format: date-time
+          description: When the key was created
+          example: "2024-01-01T00:00:00Z"
+      required:
+        - id
+        - tenant_id
+        - name
+        - scopes
+
+    CreateAPIKeyRequest:
+      type: object
+      description: Request to create a new API key
+      properties:
+        name:
+          type: string
+          description: Human-readable key name
+          minLength: 1
+          maxLength: 255
+          example: "Production API Key"
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKeyScope'
+          description: Permission scopes for this key
+          example: ["read", "write", "search"]
+        expires_at:
+          type: string
+          format: date-time
+          description: When the key should expire (omit for never)
+          example: "2025-01-01T00:00:00Z"
+      required:
+        - name
+        - scopes
+
+    CreateAPIKeyResponse:
+      type: object
+      description: Response after creating an API key (includes full key, shown only once)
+      properties:
+        key:
+          type: string
+          description: The full API key (only shown once, save securely)
+          example: "maia_abc123def456ghi789jkl012mno345pqr678"
+        api_key:
+          $ref: '#/components/schemas/APIKey'
+      required:
+        - key
+        - api_key
+
+    ListAPIKeysResponse:
+      type: object
+      description: Response for listing API keys
+      properties:
+        api_keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/APIKey'
+        total:
+          type: integer
+          description: Total number of API keys
+          example: 5
 
 security:
   - ApiKeyHeader: []

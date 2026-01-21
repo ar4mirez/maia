@@ -54,6 +54,9 @@ type TenantConfig struct {
 	// DedicatedStorageDir is the base directory for dedicated tenant storage.
 	// If set, premium tenants get isolated BadgerDB instances.
 	DedicatedStorageDir string `mapstructure:"dedicated_storage_dir"`
+	// EnforceScopesEnabled controls whether API key scope checking is active.
+	// When enabled, API keys are checked against required scopes for each endpoint.
+	EnforceScopesEnabled bool `mapstructure:"enforce_scopes_enabled"`
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.

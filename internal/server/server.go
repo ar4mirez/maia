@@ -344,6 +344,21 @@ func (s *Server) setupMiddleware() {
 
 		// Quota middleware (checks tenant resource limits)
 		s.router.Use(tenant.QuotaMiddleware(s.tenants))
+
+		// Scope middleware (checks API key scopes)
+		if s.cfg.Tenant.EnforceScopesEnabled {
+			scopeConfig := tenant.ScopeMiddlewareConfig{
+				Enabled:     true,
+				RouteScopes: tenant.DefaultRouteScopes(),
+				SkipPaths: []string{
+					"/health",
+					"/ready",
+					"/metrics",
+				},
+			}
+			s.router.Use(tenant.ScopeMiddleware(scopeConfig))
+			s.logger.Info("API key scope enforcement enabled")
+		}
 	}
 
 	// Request timeout middleware

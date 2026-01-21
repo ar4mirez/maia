@@ -529,6 +529,13 @@ func (m *BadgerManager) CreateAPIKey(ctx context.Context, input *CreateAPIKeyInp
 		return nil, "", &ErrInvalidInput{Field: "name", Message: "cannot be empty"}
 	}
 
+	// Validate scopes if provided
+	if len(input.Scopes) > 0 {
+		if err := ValidateScopes(input.Scopes); err != nil {
+			return nil, "", err
+		}
+	}
+
 	// Verify tenant exists
 	_, err := m.Get(ctx, input.TenantID)
 	if err != nil {

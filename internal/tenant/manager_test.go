@@ -706,6 +706,16 @@ func TestBadgerManager_CreateAPIKey_Validation(t *testing.T) {
 			input:   &CreateAPIKeyInput{TenantID: "nonexistent", Name: "test"},
 			wantErr: true,
 		},
+		{
+			name:    "invalid scope",
+			input:   &CreateAPIKeyInput{TenantID: tenant.ID, Name: "test", Scopes: []string{"invalid_scope"}},
+			wantErr: true,
+		},
+		{
+			name:    "valid scopes",
+			input:   &CreateAPIKeyInput{TenantID: tenant.ID, Name: "test-valid", Scopes: []string{"read", "write"}},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
