@@ -1,0 +1,480 @@
+# MAIA - Memory AI Architecture
+
+> AI-native distributed memory system for LLM context management
+
+## Overview
+
+MAIA is an intelligent context management system that sits between applications and LLMs. Instead of fighting context window limitations, MAIA intelligently manages what information goes INTO that window through position-aware context assembly.
+
+- **Repository**: https://github.com/ar4mirez/maia
+- **Documentation**: https://github.com/ar4mirez/maia/tree/main/docs
+- **License**: Apache 2.0
+
+## Core Problem Solved
+
+LLMs have limited context windows. Current solutions either truncate context (losing information), summarize (losing nuance), or use basic RAG without position awareness. Research shows LLM accuracy varies 20-30% based on where information appears in context ("context rot"). MAIA solves this with position-aware context assembly.
+
+## Key Features
+
+### Position-Aware Context Assembly
+- **Critical Zone (15%)**: High-relevance facts (score >= 0.7) placed first
+- **Middle Zone (65%)**: Supporting context, decreasing relevance
+- **Recency Zone (20%)**: Recent/temporal info, working memory last
+
+### Multi-Strategy Retrieval
+- Vector similarity (35%): Semantic matching via embeddings
+- Full-text search (25%): Keyword and phrase matching
+- Recency (20%): Favor recent information
+- Access frequency (10%): Frequently accessed = important
+- Graph connectivity (10%): Related memories boost score
+
+### Multiple Integration Patterns
+- **MCP Server**: Claude Desktop, Cursor integration (minimal setup)
+- **OpenAI Proxy**: Drop-in replacement for OpenAI API
+- **Native SDKs**: Go, TypeScript, Python
+- **REST API**: Universal access
+
+## Technical Stack
+
+- **Language**: Go 1.22+
+- **Storage**: BadgerDB v4 (embedded key-value)
+- **HTTP Framework**: Gin
+- **Vector Index**: HNSW (custom implementation)
+- **Full-Text Index**: Bleve
+- **Graph Index**: Custom adjacency list
+- **Embeddings**: all-MiniLM-L6-v2 via ONNX Runtime (local)
+- **Logging**: Zap (structured)
+- **Configuration**: Viper
+- **Metrics**: Prometheus
+- **Tracing**: OpenTelemetry
+
+## Memory Types
+
+| Type | Description | Example |
+|------|-------------|---------|
+| **semantic** | Facts, profiles, knowledge | "User prefers dark mode" |
+| **episodic** | Conversations, experiences | "Discussed migration yesterday" |
+| **working** | Current session state | "Editing file: main.go" |
+
+## API Endpoints
+
+### Core Operations
+```
+POST   /v1/memories              # Create memory
+GET    /v1/memories/:id          # Get memory
+PUT    /v1/memories/:id          # Update memory
+DELETE /v1/memories/:id          # Delete memory
+POST   /v1/memories/search       # Search memories
+POST   /v1/memories/batch        # Batch create
+
+POST   /v1/namespaces            # Create namespace
+GET    /v1/namespaces            # List namespaces
+GET    /v1/namespaces/:name      # Get namespace
+PUT    /v1/namespaces/:name      # Update namespace
+DELETE /v1/namespaces/:name      # Delete namespace
+
+POST   /v1/context               # Assemble context
+```
+
+### Proxy & Inference
+```
+POST   /proxy/v1/chat/completions     # OpenAI-compatible proxy
+POST   /v1/chat/completions           # Inference with routing
+GET    /v1/inference/health           # Provider health
+POST   /v1/inference/health/:name     # Check specific provider
+GET    /v1/inference/cache/stats      # Cache statistics
+POST   /v1/inference/cache/clear      # Clear cache
+```
+
+### Admin (Multi-Tenancy)
+```
+POST   /admin/tenants                 # Create tenant
+GET    /admin/tenants                 # List tenants
+GET    /admin/tenants/:id             # Get tenant
+PUT    /admin/tenants/:id             # Update tenant
+DELETE /admin/tenants/:id             # Delete tenant
+GET    /admin/tenants/:id/usage       # Get usage stats
+POST   /admin/tenants/:id/suspend     # Suspend tenant
+POST   /admin/tenants/:id/activate    # Activate tenant
+POST   /admin/tenants/:id/apikeys     # Create API key
+GET    /admin/tenants/:id/apikeys     # List API keys
+DELETE /admin/apikeys/:key            # Revoke API key
+```
+
+### System
+```
+GET    /health                   # Health check
+GET    /ready                    # Readiness check
+GET    /metrics                  # Prometheus metrics
+GET    /v1/stats                 # Server statistics
+```
+
+## Authentication
+
+API key authentication via:
+- Header: `X-API-Key: your-key`
+- Header: `Authorization: Bearer your-key`
+- Query: `?api_key=your-key`
+
+### Scopes
+| Scope | Description |
+|-------|-------------|
+| `*` | Full access (wildcard) |
+| `read` | Read memories/namespaces |
+| `write` | Create and update |
+| `delete` | Delete operations |
+| `search` | Search operations |
+| `context` | Context assembly |
+| `inference` | Inference operations |
+| `stats` | View statistics |
+| `admin` | Tenant/API key management |
+
+## Configuration (config.yaml)
+
+```yaml
+server:
+  http_port: 8080
+  bind_address: "0.0.0.0"
+
+storage:
+  type: badger
+  badger:
+    path: ./data/badger
+
+embedding:
+  type: local
+  local:
+    model_name: all-MiniLM-L6-v2
+    cache_dir: ./data/models
+
+index:
+  vector:
+    type: hnsw
+    m: 16
+    ef_construction: 200
+  fulltext:
+    path: ./data/bleve
+  graph:
+    enabled: true
+
+security:
+  api_key: ""
+  rate_limit_rps: 100
+  rate_limit_burst: 150
+
+tenant:
+  enabled: false
+  default_tenant_id: "system"
+  enforce_scopes_enabled: false
+  dedicated_storage_dir: ""
+
+inference:
+  enabled: false
+  default_provider: ""
+  providers: {}
+  routing:
+    model_mapping: {}
+  cache:
+    enabled: false
+    ttl: 24h
+    max_entries: 1000
+
+proxy:
+  backend: ""
+  backend_api_key: ""
+  auto_remember: true
+  auto_context: true
+  context_position: "system"
+  token_budget: 4000
+  timeout: 60s
+
+tracing:
+  enabled: false
+  service_name: maia
+  exporter_type: otlp-http
+  endpoint: localhost:4318
+  sample_rate: 1.0
+
+audit:
+  enabled: false
+  level: write
+  backend:
+    type: file
+    file_path: ./logs/audit.log
+```
+
+## Quick Start
+
+### Docker
+```bash
+docker run -d -p 8080:8080 -v maia-data:/data ghcr.io/ar4mirez/maia:latest
+```
+
+### From Source
+```bash
+git clone https://github.com/ar4mirez/maia
+cd maia
+go build -o maia ./cmd/maia
+./maia
+```
+
+### Store a Memory
+```bash
+curl -X POST http://localhost:8080/v1/memories \
+  -H "Content-Type: application/json" \
+  -d '{
+    "namespace": "default",
+    "content": "User prefers dark mode",
+    "type": "semantic"
+  }'
+```
+
+### Retrieve Context
+```bash
+curl -X POST http://localhost:8080/v1/context \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "What are the user preferences?",
+    "namespace": "default",
+    "token_budget": 2000
+  }'
+```
+
+## SDKs
+
+### Go SDK
+```go
+import "github.com/ar4mirez/maia/pkg/maia"
+
+client := maia.New(maia.WithBaseURL("http://localhost:8080"))
+
+// Remember
+mem, _ := client.Remember(ctx, "default", "User prefers dark mode")
+
+// Recall
+context, _ := client.Recall(ctx, "user preferences",
+    maia.WithNamespace("default"),
+    maia.WithTokenBudget(2000),
+)
+
+// Forget
+client.Forget(ctx, mem.ID)
+```
+
+### TypeScript SDK
+```typescript
+import { MAIAClient } from '@maia/sdk';
+
+const client = new MAIAClient({ baseUrl: 'http://localhost:8080' });
+
+// Remember
+const memory = await client.remember('default', 'User prefers dark mode');
+
+// Recall
+const context = await client.recall('user preferences', { namespace: 'default' });
+
+// Forget
+await client.forget(memory.id);
+```
+
+### Python SDK
+```python
+from maia import MAIAClient
+
+client = MAIAClient(base_url="http://localhost:8080")
+
+# Remember
+memory = client.remember("default", "User prefers dark mode")
+
+# Recall
+context = client.recall("user preferences", namespace="default")
+
+# Forget
+client.forget(memory.id)
+```
+
+## MCP Server
+
+MAIA provides a Model Context Protocol server for Claude Desktop and Cursor.
+
+### Claude Desktop Configuration
+```json
+{
+  "mcpServers": {
+    "maia": {
+      "command": "maia-mcp-server",
+      "env": {
+        "MAIA_URL": "http://localhost:8080",
+        "MAIA_DEFAULT_NAMESPACE": "claude"
+      }
+    }
+  }
+}
+```
+
+### MCP Tools
+- `remember`: Store information
+- `recall`: Retrieve context
+- `forget`: Delete memory
+- `list_memories`: List memories in namespace
+- `get_context`: Position-aware context assembly
+
+## Multi-Tenancy
+
+MAIA supports full multi-tenancy with:
+- Prefix-based namespace isolation
+- Per-tenant quotas (memories, storage, RPM)
+- API key to tenant mapping with scopes
+- Dedicated storage for premium tenants
+- Tenant-level metrics
+
+### Tenant Plans
+| Plan | Memories | Storage | RPM |
+|------|----------|---------|-----|
+| Free | 1,000 | 100 MB | 60 |
+| Standard | 50,000 | 5 GB | 600 |
+| Premium | 1,000,000 | 100 GB | 6,000 |
+
+## Inference Integration
+
+Multi-provider routing with automatic failover:
+
+```yaml
+inference:
+  enabled: true
+  providers:
+    ollama:
+      type: ollama
+      base_url: http://localhost:11434/v1
+    openrouter:
+      type: openrouter
+      api_key: ${OPENROUTER_API_KEY}
+  routing:
+    model_mapping:
+      "llama*": ollama
+      "*": openrouter
+  cache:
+    enabled: true
+    ttl: 24h
+```
+
+Supported providers: Ollama, OpenRouter, Anthropic
+
+## Monitoring
+
+### Prometheus Metrics
+- HTTP request counts and latency
+- Memory operation metrics
+- Search and context assembly metrics
+- Tenant-specific metrics
+- Rate limiting metrics
+
+### OpenTelemetry Tracing
+- Distributed request tracing
+- OTLP HTTP/gRPC exporters
+- Configurable sampling
+
+### Grafana Dashboards
+- System overview dashboard
+- Tenant metrics dashboard
+- Pre-configured in `deployments/grafana/`
+
+## Deployment
+
+### Kubernetes
+- Helm chart: `deployments/helm/maia/`
+- CRDs: MaiaInstance, MaiaTenant
+- ServiceMonitor for Prometheus Operator
+- HorizontalPodAutoscaler support
+
+### Docker Compose
+```bash
+# With monitoring (Prometheus + Grafana + Jaeger)
+docker-compose --profile monitoring up -d
+```
+
+## Performance
+
+| Operation | Target | Actual |
+|-----------|--------|--------|
+| Memory write | < 50ms p99 | ~1ms |
+| Memory read | < 20ms p99 | ~0.5ms |
+| Vector search | < 50ms p99 | ~5ms |
+| Context assembly | < 200ms p99 | ~0.3ms |
+
+## CLI Tool (maiactl)
+
+```bash
+# Memory operations
+maiactl memory create -n default -c "User prefers dark mode" -t semantic
+maiactl memory list -n default
+maiactl memory search -q "preferences" -n default
+
+# Namespace operations
+maiactl namespace create my-project --token-budget 8000
+maiactl namespace list
+
+# Context assembly
+maiactl context "What are the user's preferences?" -n default
+
+# Server stats
+maiactl stats
+```
+
+## Project Structure
+
+```
+maia/
+├── cmd/
+│   ├── maia/           # Main server
+│   ├── maiactl/        # CLI tool
+│   ├── mcp-server/     # MCP server
+│   └── migrate/        # Migration tool
+├── internal/
+│   ├── audit/          # Audit logging
+│   ├── config/         # Configuration
+│   ├── context/        # Context assembly
+│   ├── embedding/      # Embedding providers
+│   ├── index/          # Vector, fulltext, graph indexes
+│   ├── inference/      # LLM inference routing
+│   ├── metrics/        # Prometheus metrics
+│   ├── query/          # Query analysis
+│   ├── retrieval/      # Multi-strategy retrieval
+│   ├── server/         # HTTP handlers
+│   ├── storage/        # BadgerDB storage
+│   ├── tenant/         # Multi-tenancy
+│   └── tracing/        # OpenTelemetry
+├── pkg/
+│   ├── maia/           # Go SDK
+│   ├── mcp/            # MCP implementation
+│   └── proxy/          # OpenAI proxy
+├── sdk/
+│   ├── typescript/     # TypeScript SDK
+│   └── python/         # Python SDK
+├── api/
+│   └── openapi/        # OpenAPI spec
+├── deployments/
+│   ├── kubernetes/     # K8s manifests, CRDs
+│   ├── helm/           # Helm chart
+│   ├── grafana/        # Dashboards
+│   └── prometheus/     # Alerts
+├── docs/               # Documentation
+├── examples/           # Usage examples
+└── scripts/            # Backup/restore
+```
+
+## Additional Resources
+
+- [Getting Started](docs/getting-started.md)
+- [API Reference](docs/api-reference.md)
+- [Configuration](docs/configuration.md)
+- [Architecture](docs/architecture.md)
+- [Multi-Tenancy](docs/multi-tenancy.md)
+- [MCP Integration](docs/mcp-integration.md)
+- [SDKs](docs/sdks.md)
+- [Inference](docs/inference.md)
+- [Proxy](docs/proxy.md)
+- [Monitoring](docs/monitoring.md)
+- [Audit Logging](docs/audit-logging.md)
+- [Deployment](docs/deployment.md)
+- [CLI Reference](docs/cli.md)

@@ -52,6 +52,54 @@
 
     [:octicons-arrow-right-24: Deployment](deployment.md)
 
+-   :material-brain:{ .lg .middle } __Inference__
+
+    ---
+
+    Multi-provider LLM routing with failover
+
+    [:octicons-arrow-right-24: Inference](inference.md)
+
+-   :material-swap-horizontal:{ .lg .middle } __OpenAI Proxy__
+
+    ---
+
+    Drop-in OpenAI replacement with memory
+
+    [:octicons-arrow-right-24: Proxy](proxy.md)
+
+-   :material-account-group:{ .lg .middle } __Multi-Tenancy__
+
+    ---
+
+    Tenant isolation, quotas, and API keys
+
+    [:octicons-arrow-right-24: Multi-Tenancy](multi-tenancy.md)
+
+-   :material-chart-line:{ .lg .middle } __Monitoring__
+
+    ---
+
+    Metrics, tracing, and Grafana dashboards
+
+    [:octicons-arrow-right-24: Monitoring](monitoring.md)
+
+-   :material-clipboard-check:{ .lg .middle } __Audit Logging__
+
+    ---
+
+    Compliance and security audit trails
+
+    [:octicons-arrow-right-24: Audit Logging](audit-logging.md)
+
+-   :material-console:{ .lg .middle } __CLI Reference__
+
+    ---
+
+    Command-line interface documentation
+
+    [:octicons-arrow-right-24: CLI Reference](cli.md)
+
 </div>
 
 ---
