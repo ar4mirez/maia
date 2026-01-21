@@ -8,8 +8,9 @@
 | Title | Multi-Region Replication |
 | Author | MAIA Team |
 | Created | 2026-01-20 |
-| Status | Draft |
-| Decision | Pending |
+| Status | Approved |
+| Decision | Approved - Implemented Phase 1 & 2 |
+| Implementation | 2026-01-21 |
 
 ## Summary
 

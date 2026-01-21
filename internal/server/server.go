@@ -20,6 +20,7 @@ import (
 	"github.com/ar4mirez/maia/internal/inference/providers/openrouter"
 	"github.com/ar4mirez/maia/internal/metrics"
 	"github.com/ar4mirez/maia/internal/query"
+	"github.com/ar4mirez/maia/internal/replication"
 	"github.com/ar4mirez/maia/internal/retrieval"
 	"github.com/ar4mirez/maia/internal/storage"
 	"github.com/ar4mirez/maia/internal/tenant"
@@ -42,15 +43,20 @@ type Server struct {
 	inferenceRouter inference.InferenceRouter
 	inferenceCache  *inference.Cache
 	proxy           *proxy.Proxy
+	replication     *replication.Manager
+	wal             *replication.BadgerWAL
+	replHandler     *replication.Handler
 }
 
 // ServerDeps holds optional dependencies for the server.
 type ServerDeps struct {
-	Retriever       *retrieval.Retriever
-	Assembler       *mcontext.Assembler
-	Analyzer        *query.Analyzer
-	TenantManager   tenant.Manager
-	InferenceRouter inference.InferenceRouter
+	Retriever          *retrieval.Retriever
+	Assembler          *mcontext.Assembler
+	Analyzer           *query.Analyzer
+	TenantManager      tenant.Manager
+	InferenceRouter    inference.InferenceRouter
+	ReplicationManager *replication.Manager
+	WAL                *replication.BadgerWAL
 }
 
 // New creates a new HTTP server.
@@ -84,6 +90,15 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 		s.analyzer = deps.Analyzer
 		s.tenants = deps.TenantManager
 		s.inferenceRouter = deps.InferenceRouter
+		s.replication = deps.ReplicationManager
+		s.wal = deps.WAL
+	}
+
+	// Initialize replication if enabled and not provided
+	if cfg.Replication.Enabled && s.replication == nil {
+		if err := s.initReplication(); err != nil {
+			logger.Error("failed to initialize replication", zap.Error(err))
+		}
 	}
 
 	// Create TenantAwareStore if tenant manager is available
@@ -269,6 +284,65 @@ func (s *Server) initProxy() {
 	}
 
 	s.proxy = proxy.NewProxy(proxyCfg, proxyDeps)
+}
+
+// initReplication initializes the replication manager and WAL.
+func (s *Server) initReplication() error {
+	cfg := s.cfg.Replication
+
+	// Create WAL
+	walOpts := &replication.BadgerWALOptions{
+		DataDir:    cfg.WAL.DataDir,
+		Region:     cfg.Region,
+		Logger:     s.logger,
+		SyncWrites: cfg.WAL.SyncWrites,
+	}
+
+	wal, err := replication.NewBadgerWAL(walOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create WAL: %w", err)
+	}
+	s.wal = wal
+
+	// Convert config to replication types
+	var followers []replication.FollowerConfig
+	for _, f := range cfg.Followers {
+		followers = append(followers, replication.FollowerConfig{
+			ID:       f.ID,
+			Endpoint: f.Endpoint,
+			Region:   f.Region,
+			Priority: f.Priority,
+		})
+	}
+
+	// Create replication manager
+	managerCfg := &replication.ManagerConfig{
+		Role:              replication.Role(cfg.Role),
+		Region:            cfg.Region,
+		InstanceID:        cfg.InstanceID,
+		SyncMode:          replication.SyncMode(cfg.Sync.Mode),
+		MinSyncReplicas:   cfg.Sync.MinReplicas,
+		MaxReplicationLag: cfg.Sync.MaxLag,
+		ConflictStrategy:  replication.ConflictStrategy(cfg.Sync.ConflictStrategy),
+		LeaderEndpoint:    cfg.Leader.Endpoint,
+		Followers:         followers,
+		PullInterval:      cfg.Sync.PullInterval,
+		PushInterval:      cfg.Sync.PushInterval,
+		BatchSize:         cfg.Sync.BatchSize,
+	}
+
+	s.replication = replication.NewManager(managerCfg, wal, s.store, s.logger)
+
+	// Create replication HTTP handler
+	s.replHandler = replication.NewHandler(s.replication, wal, s.logger)
+
+	s.logger.Info("replication initialized",
+		zap.String("role", cfg.Role),
+		zap.String("region", cfg.Region),
+		zap.String("sync_mode", cfg.Sync.Mode),
+	)
+
+	return nil
 }
 
 // setupMiddleware configures middleware for the router.
@@ -525,10 +599,31 @@ func (s *Server) setupRoutes() {
 			zap.Bool("inference_enabled", s.inferenceRouter != nil),
 		)
 	}
+
+	// Replication routes (if replication is enabled)
+	if s.replHandler != nil {
+		s.replHandler.RegisterRoutes(v1)
+		s.logger.Info("replication routes registered",
+			zap.String("role", string(s.replication.Role())),
+			zap.String("region", s.replication.Region()),
+		)
+	}
 }
 
 // Start starts the HTTP server.
 func (s *Server) Start() error {
+	// Start replication if enabled
+	if s.replication != nil {
+		ctx := context.Background()
+		if err := s.replication.Start(ctx); err != nil {
+			s.logger.Error("failed to start replication", zap.Error(err))
+		} else {
+			s.logger.Info("replication started",
+				zap.String("role", string(s.replication.Role())),
+			)
+		}
+	}
+
 	addr := fmt.Sprintf(":%d", s.cfg.Server.HTTPPort)
 
 	s.server = &http.Server{
@@ -554,6 +649,20 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("shutting down HTTP server")
+
+	// Stop replication if enabled
+	if s.replication != nil {
+		if err := s.replication.Stop(ctx); err != nil {
+			s.logger.Error("failed to stop replication", zap.Error(err))
+		}
+	}
+
+	// Close WAL if initialized
+	if s.wal != nil {
+		if err := s.wal.Close(); err != nil {
+			s.logger.Error("failed to close WAL", zap.Error(err))
+		}
+	}
 
 	// Close inference router if initialized
 	if s.inferenceRouter != nil {

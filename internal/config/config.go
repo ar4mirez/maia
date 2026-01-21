@@ -41,6 +41,9 @@ type Config struct {
 
 	// Tenant configuration
 	Tenant TenantConfig `mapstructure:"tenant"`
+
+	// Replication configuration
+	Replication ReplicationConfig `mapstructure:"replication"`
 }
 
 // TenantConfig holds multi-tenancy settings.
@@ -57,6 +60,76 @@ type TenantConfig struct {
 	// EnforceScopesEnabled controls whether API key scope checking is active.
 	// When enabled, API keys are checked against required scopes for each endpoint.
 	EnforceScopesEnabled bool `mapstructure:"enforce_scopes_enabled"`
+}
+
+// ReplicationConfig holds multi-region replication settings.
+type ReplicationConfig struct {
+	// Enabled controls whether replication is active.
+	Enabled bool `mapstructure:"enabled"`
+	// Role is the replication role: leader, follower, or standalone.
+	Role string `mapstructure:"role"`
+	// Region is the identifier for this region.
+	Region string `mapstructure:"region"`
+	// InstanceID is a unique identifier for this instance.
+	InstanceID string `mapstructure:"instance_id"`
+	// WAL holds Write-Ahead Log settings.
+	WAL WALConfig `mapstructure:"wal"`
+	// Leader holds leader-specific settings (for followers).
+	Leader LeaderConfig `mapstructure:"leader"`
+	// Followers holds follower configurations (for leaders).
+	Followers []FollowerConfig `mapstructure:"followers"`
+	// Sync holds synchronization settings.
+	Sync SyncConfig `mapstructure:"sync"`
+}
+
+// WALConfig holds Write-Ahead Log settings.
+type WALConfig struct {
+	// DataDir is the directory for WAL data.
+	DataDir string `mapstructure:"data_dir"`
+	// SyncWrites enables synchronous writes for durability.
+	SyncWrites bool `mapstructure:"sync_writes"`
+	// RetentionPeriod is how long to keep WAL entries.
+	RetentionPeriod time.Duration `mapstructure:"retention_period"`
+	// CompactionInterval is how often to compact the WAL.
+	CompactionInterval time.Duration `mapstructure:"compaction_interval"`
+}
+
+// LeaderConfig holds leader connection settings (for followers).
+type LeaderConfig struct {
+	// Endpoint is the leader's replication endpoint URL.
+	Endpoint string `mapstructure:"endpoint"`
+	// Region is the leader's region identifier.
+	Region string `mapstructure:"region"`
+}
+
+// FollowerConfig holds follower configuration (for leaders).
+type FollowerConfig struct {
+	// ID is a unique identifier for the follower.
+	ID string `mapstructure:"id"`
+	// Endpoint is the follower's replication endpoint URL.
+	Endpoint string `mapstructure:"endpoint"`
+	// Region is the follower's region identifier.
+	Region string `mapstructure:"region"`
+	// Priority is used for leader election (higher = more preferred).
+	Priority int `mapstructure:"priority"`
+}
+
+// SyncConfig holds synchronization settings.
+type SyncConfig struct {
+	// Mode is the sync mode: async, sync, or semi-sync.
+	Mode string `mapstructure:"mode"`
+	// MinReplicas is the minimum followers to wait for in semi-sync mode.
+	MinReplicas int `mapstructure:"min_replicas"`
+	// MaxLag is the maximum acceptable replication lag.
+	MaxLag time.Duration `mapstructure:"max_lag"`
+	// PullInterval is how often followers pull from leader.
+	PullInterval time.Duration `mapstructure:"pull_interval"`
+	// PushInterval is how often leader pushes to followers.
+	PushInterval time.Duration `mapstructure:"push_interval"`
+	// BatchSize is the number of entries to sync at once.
+	BatchSize int `mapstructure:"batch_size"`
+	// ConflictStrategy is how conflicts are resolved: last-write-wins, merge, reject.
+	ConflictStrategy string `mapstructure:"conflict_strategy"`
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.
@@ -289,6 +362,23 @@ var defaults = map[string]interface{}{
 	"tenant.default_tenant_id":     "system",
 	"tenant.require_tenant":        false,
 	"tenant.dedicated_storage_dir": "",
+
+	// Replication defaults (opt-in)
+	"replication.enabled":                  false,
+	"replication.role":                     "standalone",
+	"replication.region":                   "default",
+	"replication.instance_id":              "",
+	"replication.wal.data_dir":             "./data/wal",
+	"replication.wal.sync_writes":          true,
+	"replication.wal.retention_period":     "168h", // 7 days
+	"replication.wal.compaction_interval":  "1h",
+	"replication.sync.mode":                "async",
+	"replication.sync.min_replicas":        1,
+	"replication.sync.max_lag":             "30s",
+	"replication.sync.pull_interval":       "1s",
+	"replication.sync.push_interval":       "1s",
+	"replication.sync.batch_size":          100,
+	"replication.sync.conflict_strategy":   "last-write-wins",
 }
 
 // Load loads configuration from environment variables and optional config file.
@@ -420,6 +510,32 @@ func (c *Config) Validate() error {
 	if c.Security.EnableTLS {
 		if c.Security.TLSCertPath == "" || c.Security.TLSKeyPath == "" {
 			return fmt.Errorf("TLS cert and key paths required when TLS is enabled")
+		}
+	}
+
+	// Validate replication config
+	if c.Replication.Enabled {
+		validRoles := map[string]bool{"leader": true, "follower": true, "standalone": true}
+		if !validRoles[c.Replication.Role] {
+			return fmt.Errorf("invalid replication role: %s (valid: leader, follower, standalone)", c.Replication.Role)
+		}
+
+		if c.Replication.Role == "follower" && c.Replication.Leader.Endpoint == "" {
+			return fmt.Errorf("leader endpoint required when role is follower")
+		}
+
+		validSyncModes := map[string]bool{"async": true, "sync": true, "semi-sync": true}
+		if !validSyncModes[c.Replication.Sync.Mode] {
+			return fmt.Errorf("invalid sync mode: %s (valid: async, sync, semi-sync)", c.Replication.Sync.Mode)
+		}
+
+		validConflictStrategies := map[string]bool{"last-write-wins": true, "merge": true, "reject": true}
+		if !validConflictStrategies[c.Replication.Sync.ConflictStrategy] {
+			return fmt.Errorf("invalid conflict strategy: %s (valid: last-write-wins, merge, reject)", c.Replication.Sync.ConflictStrategy)
+		}
+
+		if c.Replication.WAL.DataDir == "" {
+			return fmt.Errorf("WAL data directory is required when replication is enabled")
 		}
 	}
 

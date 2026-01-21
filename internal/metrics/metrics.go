@@ -48,6 +48,18 @@ type Metrics struct {
 	TenantQuotaUsage       *prometheus.GaugeVec
 	TenantActiveTotal      prometheus.Gauge
 	TenantOperationsTotal  *prometheus.CounterVec
+
+	// Replication metrics
+	ReplicationLagSeconds       *prometheus.GaugeVec
+	ReplicationPosition         *prometheus.GaugeVec
+	ReplicationEntriesTotal     *prometheus.CounterVec
+	ReplicationBytesTotal       *prometheus.CounterVec
+	ReplicationErrorsTotal      *prometheus.CounterVec
+	ReplicationConflictsTotal   *prometheus.CounterVec
+	WALEntriesTotal             prometheus.Gauge
+	WALSizeBytes                prometheus.Gauge
+	FollowersConnected          prometheus.Gauge
+	LeaderConnected             prometheus.Gauge
 }
 
 // New creates a new Metrics instance with all metrics registered.
@@ -275,6 +287,84 @@ func New(namespace string) *Metrics {
 			},
 			[]string{"operation", "status"},
 		),
+
+		// Replication metrics
+		ReplicationLagSeconds: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "replication_lag_seconds",
+				Help:      "Replication lag in seconds per follower",
+			},
+			[]string{"follower_id", "region"},
+		),
+		ReplicationPosition: promauto.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "replication_position",
+				Help:      "Current WAL position (sequence number)",
+			},
+			[]string{"role", "region"},
+		),
+		ReplicationEntriesTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "replication_entries_total",
+				Help:      "Total WAL entries replicated",
+			},
+			[]string{"direction", "region"}, // direction: sent, received
+		),
+		ReplicationBytesTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "replication_bytes_total",
+				Help:      "Total bytes replicated",
+			},
+			[]string{"direction", "region"},
+		),
+		ReplicationErrorsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "replication_errors_total",
+				Help:      "Total replication errors",
+			},
+			[]string{"type", "region"}, // type: network, checksum, conflict, apply
+		),
+		ReplicationConflictsTotal: promauto.NewCounterVec(
+			prometheus.CounterOpts{
+				Namespace: namespace,
+				Name:      "replication_conflicts_total",
+				Help:      "Total replication conflicts resolved",
+			},
+			[]string{"strategy", "resource_type"},
+		),
+		WALEntriesTotal: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "wal_entries_total",
+				Help:      "Total entries in the Write-Ahead Log",
+			},
+		),
+		WALSizeBytes: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "wal_size_bytes",
+				Help:      "Size of the Write-Ahead Log in bytes",
+			},
+		),
+		FollowersConnected: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "replication_followers_connected",
+				Help:      "Number of connected followers (leader only)",
+			},
+		),
+		LeaderConnected: promauto.NewGauge(
+			prometheus.GaugeOpts{
+				Namespace: namespace,
+				Name:      "replication_leader_connected",
+				Help:      "Whether connected to leader (follower only, 1=connected, 0=disconnected)",
+			},
+		),
 	}
 
 	return m
@@ -413,4 +503,54 @@ func (m *Metrics) RecordTenantOperation(operation string, success bool) {
 		status = "error"
 	}
 	m.TenantOperationsTotal.WithLabelValues(operation, status).Inc()
+}
+
+// SetReplicationLag sets the replication lag for a follower.
+func (m *Metrics) SetReplicationLag(followerID, region string, lagSeconds float64) {
+	m.ReplicationLagSeconds.WithLabelValues(followerID, region).Set(lagSeconds)
+}
+
+// SetReplicationPosition sets the current WAL position.
+func (m *Metrics) SetReplicationPosition(role, region string, sequence uint64) {
+	m.ReplicationPosition.WithLabelValues(role, region).Set(float64(sequence))
+}
+
+// RecordReplicationEntries records replicated entries.
+func (m *Metrics) RecordReplicationEntries(direction, region string, count int64) {
+	m.ReplicationEntriesTotal.WithLabelValues(direction, region).Add(float64(count))
+}
+
+// RecordReplicationBytes records replicated bytes.
+func (m *Metrics) RecordReplicationBytes(direction, region string, bytes int64) {
+	m.ReplicationBytesTotal.WithLabelValues(direction, region).Add(float64(bytes))
+}
+
+// RecordReplicationError records a replication error.
+func (m *Metrics) RecordReplicationError(errorType, region string) {
+	m.ReplicationErrorsTotal.WithLabelValues(errorType, region).Inc()
+}
+
+// RecordReplicationConflict records a resolved replication conflict.
+func (m *Metrics) RecordReplicationConflict(strategy, resourceType string) {
+	m.ReplicationConflictsTotal.WithLabelValues(strategy, resourceType).Inc()
+}
+
+// SetWALStats sets WAL statistics.
+func (m *Metrics) SetWALStats(entries int64, sizeBytes int64) {
+	m.WALEntriesTotal.Set(float64(entries))
+	m.WALSizeBytes.Set(float64(sizeBytes))
+}
+
+// SetFollowersConnected sets the number of connected followers.
+func (m *Metrics) SetFollowersConnected(count int) {
+	m.FollowersConnected.Set(float64(count))
+}
+
+// SetLeaderConnected sets whether the follower is connected to leader.
+func (m *Metrics) SetLeaderConnected(connected bool) {
+	if connected {
+		m.LeaderConnected.Set(1)
+	} else {
+		m.LeaderConnected.Set(0)
+	}
 }
