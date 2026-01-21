@@ -4,14 +4,27 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/ar4mirez/maia/internal/storage"
+	"github.com/ar4mirez/maia/internal/storage/badger"
 )
 
 // TenantSeparator is used to separate tenant ID from namespace.
 const TenantSeparator = "::"
+
+// DedicatedStorageConfig configures dedicated storage for premium tenants.
+type DedicatedStorageConfig struct {
+	// BaseDir is the base directory for dedicated tenant storage.
+	// Each tenant gets a subdirectory: {BaseDir}/{tenantID}/
+	BaseDir string
+
+	// SyncWrites enables synchronous writes for durability.
+	SyncWrites bool
+}
 
 // TenantAwareStore wraps a storage.Store with tenant isolation.
 // It prefixes all namespaces with the tenant ID to ensure data isolation.
@@ -22,6 +35,10 @@ type TenantAwareStore struct {
 	// dedicatedStores holds per-tenant BadgerDB instances for premium tenants.
 	dedicatedStores map[string]storage.Store
 	mu              sync.RWMutex
+
+	// dedicatedConfig holds configuration for dedicated storage.
+	// If nil, dedicated storage is disabled and all tenants use the shared store.
+	dedicatedConfig *DedicatedStorageConfig
 }
 
 // NewTenantAwareStore creates a new tenant-aware store wrapper.
@@ -31,6 +48,24 @@ func NewTenantAwareStore(store storage.Store, manager Manager) *TenantAwareStore
 		manager:         manager,
 		dedicatedStores: make(map[string]storage.Store),
 	}
+}
+
+// NewTenantAwareStoreWithDedicated creates a tenant-aware store with dedicated storage support.
+func NewTenantAwareStoreWithDedicated(store storage.Store, manager Manager, config *DedicatedStorageConfig) *TenantAwareStore {
+	return &TenantAwareStore{
+		store:           store,
+		manager:         manager,
+		dedicatedStores: make(map[string]storage.Store),
+		dedicatedConfig: config,
+	}
+}
+
+// SetDedicatedStorageConfig sets the configuration for dedicated storage.
+// This enables lazy initialization of dedicated stores for premium tenants.
+func (s *TenantAwareStore) SetDedicatedStorageConfig(config *DedicatedStorageConfig) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dedicatedConfig = config
 }
 
 // getStoreForTenant returns the appropriate store for the given tenant.
@@ -52,14 +87,51 @@ func (s *TenantAwareStore) getStoreForTenant(ctx context.Context, tenantID strin
 	// Check for existing dedicated store
 	s.mu.RLock()
 	dedicatedStore, ok := s.dedicatedStores[tenantID]
+	dedicatedConfig := s.dedicatedConfig
 	s.mu.RUnlock()
 	if ok {
 		return dedicatedStore, nil
 	}
 
-	// For now, return shared store even for premium tenants
-	// Dedicated store initialization can be implemented later
-	return s.store, nil
+	// If dedicated storage is not configured, fall back to shared store
+	if dedicatedConfig == nil {
+		return s.store, nil
+	}
+
+	// Lazily initialize dedicated store for this tenant
+	return s.initDedicatedStore(tenantID, dedicatedConfig)
+}
+
+// initDedicatedStore initializes a dedicated BadgerDB store for a premium tenant.
+// This is called lazily when a premium tenant with dedicated storage is first accessed.
+func (s *TenantAwareStore) initDedicatedStore(tenantID string, config *DedicatedStorageConfig) (storage.Store, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if existingStore, ok := s.dedicatedStores[tenantID]; ok {
+		return existingStore, nil
+	}
+
+	// Create tenant-specific directory
+	tenantDir := filepath.Join(config.BaseDir, tenantID)
+	if err := os.MkdirAll(tenantDir, 0750); err != nil {
+		return nil, fmt.Errorf("failed to create dedicated storage directory for tenant %s: %w", tenantID, err)
+	}
+
+	// Create dedicated BadgerDB store
+	dedicatedStore, err := badger.New(&badger.Options{
+		DataDir:    tenantDir,
+		SyncWrites: config.SyncWrites,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dedicated store for tenant %s: %w", tenantID, err)
+	}
+
+	// Register the dedicated store
+	s.dedicatedStores[tenantID] = dedicatedStore
+
+	return dedicatedStore, nil
 }
 
 // RegisterDedicatedStore registers a dedicated store for a premium tenant.
@@ -67,6 +139,36 @@ func (s *TenantAwareStore) RegisterDedicatedStore(tenantID string, store storage
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dedicatedStores[tenantID] = store
+}
+
+// UnregisterDedicatedStore removes and closes a dedicated store for a tenant.
+// This should be called when a tenant is deleted or downgraded from premium.
+func (s *TenantAwareStore) UnregisterDedicatedStore(tenantID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dedicatedStore, ok := s.dedicatedStores[tenantID]
+	if !ok {
+		return nil
+	}
+
+	delete(s.dedicatedStores, tenantID)
+	return dedicatedStore.Close()
+}
+
+// HasDedicatedStore returns true if the tenant has a dedicated store initialized.
+func (s *TenantAwareStore) HasDedicatedStore(tenantID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.dedicatedStores[tenantID]
+	return ok
+}
+
+// DedicatedStoreCount returns the number of active dedicated stores.
+func (s *TenantAwareStore) DedicatedStoreCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.dedicatedStores)
 }
 
 // prefixNamespace adds the tenant ID prefix to a namespace.

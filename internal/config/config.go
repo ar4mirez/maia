@@ -38,6 +38,22 @@ type Config struct {
 
 	// Inference configuration
 	Inference InferenceConfig `mapstructure:"inference"`
+
+	// Tenant configuration
+	Tenant TenantConfig `mapstructure:"tenant"`
+}
+
+// TenantConfig holds multi-tenancy settings.
+type TenantConfig struct {
+	// Enabled controls whether multi-tenancy is active.
+	Enabled bool `mapstructure:"enabled"`
+	// DefaultTenantID is used when no tenant is specified (for backward compatibility).
+	DefaultTenantID string `mapstructure:"default_tenant_id"`
+	// RequireTenant controls whether requests without a tenant should fail.
+	RequireTenant bool `mapstructure:"require_tenant"`
+	// DedicatedStorageDir is the base directory for dedicated tenant storage.
+	// If set, premium tenants get isolated BadgerDB instances.
+	DedicatedStorageDir string `mapstructure:"dedicated_storage_dir"`
 }
 
 // TracingConfig holds OpenTelemetry tracing settings.
@@ -264,6 +280,12 @@ var defaults = map[string]interface{}{
 	"inference.health.timeout":             "10s",
 	"inference.health.unhealthy_threshold": 3,
 	"inference.health.healthy_threshold":   2,
+
+	// Tenant defaults (opt-in)
+	"tenant.enabled":               false,
+	"tenant.default_tenant_id":     "system",
+	"tenant.require_tenant":        false,
+	"tenant.dedicated_storage_dir": "",
 }
 
 // Load loads configuration from environment variables and optional config file.

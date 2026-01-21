@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	badgerdb "github.com/dgraph-io/badger/v4"
@@ -574,6 +575,266 @@ func TestTenantAwareStore_RegisterDedicatedStore(t *testing.T) {
 
 	// Verify it's registered
 	assert.NotNil(t, store.dedicatedStores["premium-tenant"])
+	assert.True(t, store.HasDedicatedStore("premium-tenant"))
+	assert.False(t, store.HasDedicatedStore("non-existent"))
+	assert.Equal(t, 1, store.DedicatedStoreCount())
+}
+
+func TestTenantAwareStore_UnregisterDedicatedStore(t *testing.T) {
+	store, _, cleanup := setupTestStoreWithManager(t)
+	defer cleanup()
+
+	// Create a dedicated store
+	dedicatedDir := t.TempDir()
+	dedicatedStore, err := badger.NewWithPath(dedicatedDir)
+	require.NoError(t, err)
+
+	// Register dedicated store
+	store.RegisterDedicatedStore("premium-tenant", dedicatedStore)
+	assert.True(t, store.HasDedicatedStore("premium-tenant"))
+
+	// Unregister it
+	err = store.UnregisterDedicatedStore("premium-tenant")
+	require.NoError(t, err)
+
+	// Verify it's gone
+	assert.False(t, store.HasDedicatedStore("premium-tenant"))
+	assert.Equal(t, 0, store.DedicatedStoreCount())
+
+	// Unregistering non-existent should not error
+	err = store.UnregisterDedicatedStore("non-existent")
+	require.NoError(t, err)
+}
+
+func TestTenantAwareStore_DedicatedStorageLazyInit(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create underlying store
+	store, err := badger.NewWithPath(tmpDir + "/data")
+	require.NoError(t, err)
+
+	// Create tenant manager with BadgerDB
+	opts := badgerdb.DefaultOptions(tmpDir + "/tenants")
+	opts.Logger = nil
+	db, err := badgerdb.Open(opts)
+	require.NoError(t, err)
+
+	manager := NewBadgerManager(db)
+
+	// Create a premium tenant with dedicated storage
+	premiumTenant, err := manager.Create(context.Background(), &CreateTenantInput{
+		Name: "premium-tenant",
+		Plan: PlanPremium,
+		Config: Config{
+			DedicatedStorage: true,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create tenant-aware store with dedicated storage config
+	dedicatedDir := tmpDir + "/dedicated"
+	tenantStore := NewTenantAwareStoreWithDedicated(store, manager, &DedicatedStorageConfig{
+		BaseDir:    dedicatedDir,
+		SyncWrites: false,
+	})
+
+	defer func() {
+		tenantStore.Close()
+		db.Close()
+	}()
+
+	ctx := context.Background()
+
+	// Initially no dedicated stores
+	assert.Equal(t, 0, tenantStore.DedicatedStoreCount())
+
+	// Create memory for premium tenant - should lazily initialize dedicated store
+	mem, err := tenantStore.CreateMemory(ctx, premiumTenant.ID, &storage.CreateMemoryInput{
+		Namespace:  "default",
+		Content:    "Premium tenant memory",
+		Type:       storage.MemoryTypeSemantic,
+		Confidence: 1.0,
+		Source:     storage.MemorySourceUser,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, mem.ID)
+
+	// Dedicated store should now be initialized
+	assert.True(t, tenantStore.HasDedicatedStore(premiumTenant.ID))
+	assert.Equal(t, 1, tenantStore.DedicatedStoreCount())
+
+	// Verify the dedicated directory was created
+	_, err = os.Stat(dedicatedDir + "/" + premiumTenant.ID)
+	assert.NoError(t, err)
+
+	// Retrieve the memory - should use dedicated store
+	retrieved, err := tenantStore.GetMemory(ctx, premiumTenant.ID, mem.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Premium tenant memory", retrieved.Content)
+}
+
+func TestTenantAwareStore_DedicatedStorageIsolation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create underlying store
+	store, err := badger.NewWithPath(tmpDir + "/data")
+	require.NoError(t, err)
+
+	// Create tenant manager with BadgerDB
+	opts := badgerdb.DefaultOptions(tmpDir + "/tenants")
+	opts.Logger = nil
+	db, err := badgerdb.Open(opts)
+	require.NoError(t, err)
+
+	manager := NewBadgerManager(db)
+
+	// Create a premium tenant with dedicated storage
+	premiumTenant, err := manager.Create(context.Background(), &CreateTenantInput{
+		Name: "premium-tenant",
+		Plan: PlanPremium,
+		Config: Config{
+			DedicatedStorage: true,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create a standard tenant (uses shared store)
+	standardTenant, err := manager.Create(context.Background(), &CreateTenantInput{
+		Name: "standard-tenant",
+		Plan: PlanStandard,
+	})
+	require.NoError(t, err)
+
+	// Create tenant-aware store with dedicated storage config
+	dedicatedDir := tmpDir + "/dedicated"
+	tenantStore := NewTenantAwareStoreWithDedicated(store, manager, &DedicatedStorageConfig{
+		BaseDir:    dedicatedDir,
+		SyncWrites: false,
+	})
+
+	defer func() {
+		tenantStore.Close()
+		db.Close()
+	}()
+
+	ctx := context.Background()
+
+	// Create memory for premium tenant (uses dedicated store)
+	premiumMem, err := tenantStore.CreateMemory(ctx, premiumTenant.ID, &storage.CreateMemoryInput{
+		Namespace:  "default",
+		Content:    "Premium secret",
+		Type:       storage.MemoryTypeSemantic,
+		Confidence: 1.0,
+		Source:     storage.MemorySourceUser,
+	})
+	require.NoError(t, err)
+
+	// Create memory for standard tenant (uses shared store)
+	standardMem, err := tenantStore.CreateMemory(ctx, standardTenant.ID, &storage.CreateMemoryInput{
+		Namespace:  "default",
+		Content:    "Standard data",
+		Type:       storage.MemoryTypeSemantic,
+		Confidence: 1.0,
+		Source:     storage.MemorySourceUser,
+	})
+	require.NoError(t, err)
+
+	// Premium can access their own memory
+	retrieved, err := tenantStore.GetMemory(ctx, premiumTenant.ID, premiumMem.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Premium secret", retrieved.Content)
+
+	// Standard can access their own memory
+	retrieved, err = tenantStore.GetMemory(ctx, standardTenant.ID, standardMem.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Standard data", retrieved.Content)
+
+	// Cross-tenant access should fail (different stores entirely)
+	_, err = tenantStore.GetMemory(ctx, standardTenant.ID, premiumMem.ID)
+	assert.Error(t, err)
+
+	_, err = tenantStore.GetMemory(ctx, premiumTenant.ID, standardMem.ID)
+	assert.Error(t, err)
+}
+
+func TestTenantAwareStore_SetDedicatedStorageConfig(t *testing.T) {
+	store, _, cleanup := setupTestStoreWithManager(t)
+	defer cleanup()
+
+	// Initially no dedicated config
+	store.mu.RLock()
+	assert.Nil(t, store.dedicatedConfig)
+	store.mu.RUnlock()
+
+	// Set config
+	config := &DedicatedStorageConfig{
+		BaseDir:    "/tmp/dedicated",
+		SyncWrites: true,
+	}
+	store.SetDedicatedStorageConfig(config)
+
+	// Verify config is set
+	store.mu.RLock()
+	assert.NotNil(t, store.dedicatedConfig)
+	assert.Equal(t, "/tmp/dedicated", store.dedicatedConfig.BaseDir)
+	assert.True(t, store.dedicatedConfig.SyncWrites)
+	store.mu.RUnlock()
+}
+
+func TestTenantAwareStore_DedicatedStorageWithoutConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create underlying store
+	store, err := badger.NewWithPath(tmpDir + "/data")
+	require.NoError(t, err)
+
+	// Create tenant manager with BadgerDB
+	opts := badgerdb.DefaultOptions(tmpDir + "/tenants")
+	opts.Logger = nil
+	db, err := badgerdb.Open(opts)
+	require.NoError(t, err)
+
+	manager := NewBadgerManager(db)
+
+	// Create a premium tenant with dedicated storage
+	premiumTenant, err := manager.Create(context.Background(), &CreateTenantInput{
+		Name: "premium-tenant",
+		Plan: PlanPremium,
+		Config: Config{
+			DedicatedStorage: true,
+		},
+	})
+	require.NoError(t, err)
+
+	// Create tenant-aware store WITHOUT dedicated storage config
+	tenantStore := NewTenantAwareStore(store, manager)
+
+	defer func() {
+		tenantStore.Close()
+		db.Close()
+	}()
+
+	ctx := context.Background()
+
+	// Create memory for premium tenant - should fall back to shared store
+	mem, err := tenantStore.CreateMemory(ctx, premiumTenant.ID, &storage.CreateMemoryInput{
+		Namespace:  "default",
+		Content:    "Premium tenant memory",
+		Type:       storage.MemoryTypeSemantic,
+		Confidence: 1.0,
+		Source:     storage.MemorySourceUser,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, mem.ID)
+
+	// No dedicated store should be initialized (falls back to shared)
+	assert.False(t, tenantStore.HasDedicatedStore(premiumTenant.ID))
+	assert.Equal(t, 0, tenantStore.DedicatedStoreCount())
+
+	// Memory should still be retrievable via shared store
+	retrieved, err := tenantStore.GetMemory(ctx, premiumTenant.ID, mem.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Premium tenant memory", retrieved.Content)
 }
 
 func TestTenantAwareStore_UnderlyingStore(t *testing.T) {

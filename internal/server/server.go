@@ -88,7 +88,19 @@ func NewWithDeps(cfg *config.Config, store storage.Store, logger *zap.Logger, de
 
 	// Create TenantAwareStore if tenant manager is available
 	if s.tenants != nil {
-		s.tenantStore = tenant.NewTenantAwareStore(store, s.tenants)
+		// Check if dedicated storage is configured
+		if cfg.Tenant.DedicatedStorageDir != "" {
+			s.tenantStore = tenant.NewTenantAwareStoreWithDedicated(store, s.tenants, &tenant.DedicatedStorageConfig{
+				BaseDir:    cfg.Tenant.DedicatedStorageDir,
+				SyncWrites: cfg.Storage.SyncWrites,
+			})
+			s.logger.Info("tenant-aware store initialized with dedicated storage",
+				zap.String("dedicated_dir", cfg.Tenant.DedicatedStorageDir),
+			)
+		} else {
+			s.tenantStore = tenant.NewTenantAwareStore(store, s.tenants)
+			s.logger.Info("tenant-aware store initialized with shared storage")
+		}
 	}
 
 	// Create default analyzer if not provided
@@ -305,6 +317,25 @@ func (s *Server) setupMiddleware() {
 		DefaultPolicy:     s.cfg.Security.Authorization.DefaultPolicy,
 		APIKeyPermissions: s.cfg.Security.Authorization.APIKeyPermissions,
 	}))
+
+	// Tenant middleware (multi-tenancy support)
+	if s.tenants != nil {
+		s.router.Use(tenant.Middleware(tenant.MiddlewareConfig{
+			Manager:         s.tenants,
+			Enabled:         s.cfg.Tenant.Enabled,
+			DefaultTenantID: s.cfg.Tenant.DefaultTenantID,
+			RequireTenant:   s.cfg.Tenant.RequireTenant,
+			SkipPaths: []string{
+				"/health",
+				"/ready",
+				"/metrics",
+				"/admin",
+			},
+		}))
+
+		// Quota middleware (checks tenant resource limits)
+		s.router.Use(tenant.QuotaMiddleware(s.tenants))
+	}
 
 	// Request timeout middleware
 	s.router.Use(s.timeoutMiddleware())

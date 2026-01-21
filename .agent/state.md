@@ -1205,12 +1205,78 @@ if s.tenantStore != nil {
 - Load tests use `-short` skip pattern for CI/CD
 - Overall coverage: ~75%
 
+### SESSION 27 (2026-01-20) - Dedicated Storage & Tenant Middleware
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Implemented dedicated storage for premium tenants
+  - Added `DedicatedStorageConfig` for configuring dedicated storage base directory
+  - Added `NewTenantAwareStoreWithDedicated` constructor
+  - Implemented lazy initialization of dedicated BadgerDB stores
+  - Added `initDedicatedStore` method for on-demand store creation
+  - Added `UnregisterDedicatedStore`, `HasDedicatedStore`, `DedicatedStoreCount` methods
+  - Added `SetDedicatedStorageConfig` for runtime configuration
+- [x] Added comprehensive dedicated storage tests (6 new tests)
+  - `TestTenantAwareStore_UnregisterDedicatedStore`
+  - `TestTenantAwareStore_DedicatedStorageLazyInit`
+  - `TestTenantAwareStore_DedicatedStorageIsolation`
+  - `TestTenantAwareStore_SetDedicatedStorageConfig`
+  - `TestTenantAwareStore_DedicatedStorageWithoutConfig`
+- [x] Integrated tenant middleware with API routes
+  - Added `TenantConfig` to configuration with `enabled`, `default_tenant_id`, `require_tenant`, `dedicated_storage_dir`
+  - Added tenant middleware to server setup (identification, validation, quota checking)
+  - Server auto-initializes TenantAwareStore with or without dedicated storage
+  - Quota middleware checks tenant resource limits on write operations
+- [x] All tests pass
+
+**Key Components Added/Modified**:
+
+- `internal/tenant/store.go` - Added dedicated storage infrastructure
+- `internal/tenant/store_test.go` - Added dedicated storage tests
+- `internal/config/config.go` - Added `TenantConfig` struct and defaults
+- `internal/server/server.go` - Integrated tenant middleware and dedicated storage
+
+**Dedicated Storage Features**:
+
+- Premium tenants (`Config.DedicatedStorage: true`) get isolated BadgerDB instances
+- Lazy initialization - stores created on first access
+- Configurable base directory: `tenant.dedicated_storage_dir`
+- Falls back to shared store if dedicated config not set
+- Proper cleanup on store close
+
+**Tenant Middleware Features**:
+
+- Tenant identification via `X-MAIA-Tenant-ID` header
+- Automatic tenant validation and status checking (suspended, pending deletion)
+- Quota enforcement on write operations (memory count, storage bytes)
+- Skip paths for health/metrics/admin endpoints
+- Default tenant ID fallback for backward compatibility
+
+**Configuration Example**:
+
+```yaml
+tenant:
+  enabled: true
+  default_tenant_id: "system"
+  require_tenant: false
+  dedicated_storage_dir: "/var/lib/maia/tenants"
+```
+
+**Notes**:
+
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- Backward compatible: works without tenant manager or config
+
 ---
 
 ## Next Steps
 
-1. **Dedicated Storage Implementation** - Implement lazy initialization of dedicated BadgerDB instances for premium tenants
-2. **Tenant Middleware Integration** - Add tenant middleware to API routes
+1. **Tenant API Key Integration** - Map API keys to tenants for automatic tenant identification
+2. **Tenant Metrics Dashboard** - Add per-tenant Grafana dashboards
+3. **Data Migration Tools** - Tools to migrate data between tenants or from single to multi-tenant
 
 ---
 
