@@ -151,4 +151,8 @@ nav:
       - SDKs: sdks.md
       - MCP Integration: mcp-integration.md
       - API Reference: api-reference.md
-  - Deployment: deployment.md
+  - Operations:
+      - Deployment: deployment.md
+      - Kubernetes Operator: operator.md
+      - Monitoring: monitoring.md
+      - Audit Logging: audit-logging.md

@@ -52,6 +52,14 @@
 
     [:octicons-arrow-right-24: Deployment](deployment.md)
 
+-   :material-cogs:{ .lg .middle } __Kubernetes Operator__
+
+    ---
+
+    Declarative MAIA management with CRDs
+
+    [:octicons-arrow-right-24: Kubernetes Operator](operator.md)
+
 -   :material-brain:{ .lg .middle } __Inference__
 
     ---

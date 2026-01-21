@@ -387,6 +387,62 @@ Supported providers: Ollama, OpenRouter, Anthropic
 - ServiceMonitor for Prometheus Operator
 - HorizontalPodAutoscaler support
 
+### Kubernetes Operator
+- Kubernetes-native management for MAIA instances and tenants
+- Controller-runtime v0.23.0 (Kubernetes 1.35+ compatible)
+- Declarative configuration via Custom Resources
+- Automatic resource management (Deployments, Services, ConfigMaps, PVCs, Ingresses)
+- Tenant lifecycle via MAIA Admin API
+- API key provisioning to Kubernetes Secrets
+- Status tracking with conditions
+
+```bash
+# Install CRDs
+kubectl apply -f deployments/kubernetes/crds/
+
+# Deploy Operator
+kubectl apply -k operator/config/rbac/
+kubectl apply -k operator/config/manager/
+```
+
+#### MaiaInstance Example
+```yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia
+spec:
+  replicas: 1
+  image:
+    repository: ghcr.io/ar4mirez/maia
+    tag: v1.0.0
+  storage:
+    size: 10Gi
+  tenancy:
+    enabled: true
+  metrics:
+    enabled: true
+```
+
+#### MaiaTenant Example
+```yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaTenant
+metadata:
+  name: demo
+spec:
+  instanceRef:
+    name: maia
+  plan: free
+  quotas:
+    maxMemories: 1000
+  apiKeys:
+  - name: demo-key
+    secretRef:
+      name: demo-api-key
+    scopes: ["read", "write", "context"]
+```
+
 ### Docker Compose
 ```bash
 # With monitoring (Prometheus + Grafana + Jaeger)
@@ -453,6 +509,12 @@ maia/
 │   └── python/         # Python SDK
 ├── api/
 │   └── openapi/        # OpenAPI spec
+├── operator/           # Kubernetes Operator
+│   ├── cmd/operator/   # Operator entrypoint
+│   ├── api/v1alpha1/   # CRD Go types
+│   ├── internal/       # Controllers
+│   ├── pkg/maia/       # Admin API client
+│   └── config/         # Deployment manifests
 ├── deployments/
 │   ├── kubernetes/     # K8s manifests, CRDs
 │   ├── helm/           # Helm chart
@@ -477,4 +539,5 @@ maia/
 - [Monitoring](docs/monitoring.md)
 - [Audit Logging](docs/audit-logging.md)
 - [Deployment](docs/deployment.md)
+- [Kubernetes Operator](docs/operator.md)
 - [CLI Reference](docs/cli.md)
