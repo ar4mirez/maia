@@ -128,8 +128,8 @@ func Middleware(config MiddlewareConfig) gin.HandlerFunc {
 		if config.Logger != nil {
 			ctx := context.Background()
 			if err := config.Logger.Log(ctx, event); err != nil {
-				// Don't fail the request, just log the error
-				c.Error(err)
+				// Don't fail the request, just log the error to gin context
+				_ = c.Error(err)
 			}
 		}
 	}

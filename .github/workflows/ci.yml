@@ -186,18 +186,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: v1.29.0
-
-      - name: Validate CRD syntax
+      - name: Validate CRD YAML syntax
         run: |
-          # Use --validate=false since dry-run=client still requires API server for OpenAPI validation
-          kubectl apply --dry-run=client --validate=false -f deployments/kubernetes/crds/maia.cuemby.com_maiainstances.yaml
-          kubectl apply --dry-run=client --validate=false -f deployments/kubernetes/crds/maia.cuemby.com_maiatenants.yaml
-          # Verify YAML syntax using yq
+          # Verify YAML syntax using yq (kubectl dry-run requires a cluster)
           for f in deployments/kubernetes/crds/*.yaml; do
-            echo "Validating $f"
-            cat "$f" | yq e '.' > /dev/null || exit 1
+            echo "Validating YAML syntax: $f"
+            yq e '.' "$f" > /dev/null || exit 1
+            # Check CRD has required fields
+            kind=$(yq e '.kind' "$f")
+            if [ "$kind" != "CustomResourceDefinition" ]; then
+              echo "Error: $f does not have kind: CustomResourceDefinition"
+              exit 1
+            fi
+            echo "  - kind: $kind"
+            echo "  - name: $(yq e '.metadata.name' "$f")"
           done
+          echo "All CRDs validated successfully"

@@ -163,8 +163,8 @@ func (l *FileLogger) Close() error {
 	l.closed = true
 	close(l.closeCh)
 
-	// Flush remaining events
-	l.flushLocked()
+	// Flush remaining events (ignore error as we're closing anyway)
+	_ = l.flushLocked()
 
 	// Close file
 	if l.file != nil {
