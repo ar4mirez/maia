@@ -1,0 +1,307 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: maiainstances.maia.cuemby.com
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: maia.cuemby.com
+  names:
+    kind: MaiaInstance
+    listKind: MaiaInstanceList
+    plural: maiainstances
+    singular: maiainstance
+    shortNames:
+      - maia
+      - mi
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Status
+          type: string
+          jsonPath: .status.phase
+        - name: Tenants
+          type: integer
+          jsonPath: .status.tenantCount
+        - name: Memories
+          type: integer
+          jsonPath: .status.totalMemories
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: MaiaInstance is the Schema for the MAIA memory service
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: MaiaInstanceSpec defines the desired state of MaiaInstance
+              properties:
+                replicas:
+                  type: integer
+                  minimum: 1
+                  maximum: 10
+                  default: 1
+                  description: Number of MAIA replicas (stateless mode requires external storage)
+                image:
+                  type: object
+                  description: Container image configuration
+                  properties:
+                    repository:
+                      type: string
+                      default: "maia"
+                    tag:
+                      type: string
+                      default: "latest"
+                    pullPolicy:
+                      type: string
+                      enum: ["Always", "IfNotPresent", "Never"]
+                      default: "IfNotPresent"
+                storage:
+                  type: object
+                  description: Storage configuration
+                  properties:
+                    size:
+                      type: string
+                      default: "10Gi"
+                      pattern: "^[0-9]+(Gi|Mi|Ti)$"
+                    storageClassName:
+                      type: string
+                    dataDir:
+                      type: string
+                      default: "/data"
+                    syncWrites:
+                      type: boolean
+                      default: false
+                    gcInterval:
+                      type: string
+                      default: "5m"
+                security:
+                  type: object
+                  description: Security configuration
+                  properties:
+                    apiKeySecretRef:
+                      type: object
+                      description: Reference to secret containing API key
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
+                          default: "api-key"
+                      required:
+                        - name
+                    tlsSecretRef:
+                      type: object
+                      description: Reference to TLS secret for HTTPS
+                      properties:
+                        name:
+                          type: string
+                      required:
+                        - name
+                embedding:
+                  type: object
+                  description: Embedding model configuration
+                  properties:
+                    model:
+                      type: string
+                      enum: ["local", "openai", "ollama"]
+                      default: "local"
+                    openaiSecretRef:
+                      type: object
+                      description: Reference to secret containing OpenAI API key
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
+                          default: "openai-api-key"
+                      required:
+                        - name
+                    ollamaEndpoint:
+                      type: string
+                      description: Ollama API endpoint URL
+                tenancy:
+                  type: object
+                  description: Multi-tenancy configuration
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    requireTenant:
+                      type: boolean
+                      default: false
+                    defaultTenantId:
+                      type: string
+                      default: "default"
+                    enforceScopesEnabled:
+                      type: boolean
+                      default: false
+                    dedicatedStorage:
+                      type: boolean
+                      default: false
+                      description: Use dedicated storage directories per tenant
+                rateLimit:
+                  type: object
+                  description: Rate limiting configuration
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    requestsPerSecond:
+                      type: integer
+                      default: 100
+                    burst:
+                      type: integer
+                      default: 200
+                logging:
+                  type: object
+                  description: Logging configuration
+                  properties:
+                    level:
+                      type: string
+                      enum: ["debug", "info", "warn", "error"]
+                      default: "info"
+                    format:
+                      type: string
+                      enum: ["json", "text"]
+                      default: "json"
+                metrics:
+                  type: object
+                  description: Metrics configuration
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                    serviceMonitor:
+                      type: object
+                      description: Prometheus ServiceMonitor configuration
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                        interval:
+                          type: string
+                          default: "30s"
+                        labels:
+                          type: object
+                          additionalProperties:
+                            type: string
+                ingress:
+                  type: object
+                  description: Ingress configuration
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    className:
+                      type: string
+                    host:
+                      type: string
+                    annotations:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    tls:
+                      type: boolean
+                      default: false
+                resources:
+                  type: object
+                  description: Resource requirements
+                  properties:
+                    limits:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                          default: "1000m"
+                        memory:
+                          type: string
+                          default: "1Gi"
+                    requests:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                          default: "100m"
+                        memory:
+                          type: string
+                          default: "256Mi"
+                backup:
+                  type: object
+                  description: Backup configuration
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    schedule:
+                      type: string
+                      default: "0 2 * * *"
+                      description: Cron schedule for backups
+                    retentionDays:
+                      type: integer
+                      default: 30
+                    storageSize:
+                      type: string
+                      default: "20Gi"
+                    compress:
+                      type: boolean
+                      default: true
+            status:
+              type: object
+              description: MaiaInstanceStatus defines the observed state of MaiaInstance
+              properties:
+                phase:
+                  type: string
+                  enum: ["Pending", "Running", "Failed", "Updating"]
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                        enum: ["True", "False", "Unknown"]
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+                    required:
+                      - type
+                      - status
+                replicas:
+                  type: integer
+                readyReplicas:
+                  type: integer
+                tenantCount:
+                  type: integer
+                totalMemories:
+                  type: integer
+                storageUsed:
+                  type: string
+                lastBackup:
+                  type: string
+                  format: date-time
+                version:
+                  type: string
+                endpoint:
+                  type: string
+          required:
+            - spec

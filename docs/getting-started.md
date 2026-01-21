@@ -31,29 +31,58 @@ curl http://localhost:8080/health
 # Response: {"status":"ok"}
 ```
 
-### Option 2: Build from Source
+### Option 2: Download Pre-built Binaries
+
+```bash
+# macOS (Apple Silicon)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-darwin-arm64.tar.gz
+tar -xzf maia-darwin-arm64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+
+# macOS (Intel)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-darwin-amd64.tar.gz
+tar -xzf maia-darwin-amd64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+
+# Linux (x86_64)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-linux-amd64.tar.gz
+tar -xzf maia-linux-amd64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+
+# Linux (ARM64)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-linux-arm64.tar.gz
+tar -xzf maia-linux-arm64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+```
+
+### Option 3: Build from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/ar4mirez/maia
 cd maia
 
-# Build the server
-go build -o maia ./cmd/maia
+# Build all binaries
+make build
 
-# Build the CLI
+# Or build individually
+go build -o maia ./cmd/maia
 go build -o maiactl ./cmd/maiactl
+go build -o maia-mcp ./cmd/mcp-server
+go build -o maia-migrate ./cmd/migrate
 
 # Run the server
-./maia
+./build/maia
 ```
 
-### Option 3: Go Install
+### Option 4: Go Install
 
 ```bash
 # Install server and CLI
 go install github.com/ar4mirez/maia/cmd/maia@latest
 go install github.com/ar4mirez/maia/cmd/maiactl@latest
+go install github.com/ar4mirez/maia/cmd/mcp-server@latest
+go install github.com/ar4mirez/maia/cmd/migrate@latest
 
 # Run
 maia

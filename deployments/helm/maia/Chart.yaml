@@ -1,0 +1,19 @@
+apiVersion: v2
+name: maia
+description: MAIA - Memory-Augmented Intelligent Agent for LLMs
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - maia
+  - llm
+  - memory
+  - context
+  - ai
+  - multi-tenant
+home: https://github.com/ar4mirez/maia
+sources:
+  - https://github.com/ar4mirez/maia
+maintainers:
+  - name: MAIA Team
+    email: support@example.com

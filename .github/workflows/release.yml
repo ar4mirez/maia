@@ -81,6 +81,7 @@ jobs:
           go build -ldflags="${LDFLAGS}" -o dist/maia${EXT} ./cmd/maia
           go build -ldflags="${LDFLAGS}" -o dist/maiactl${EXT} ./cmd/maiactl
           go build -ldflags="${LDFLAGS}" -o dist/maia-mcp${EXT} ./cmd/mcp-server
+          go build -ldflags="${LDFLAGS}" -o dist/maia-migrate${EXT} ./cmd/migrate
 
       - name: Create archive
         env:
@@ -105,7 +106,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: build-binaries
+    needs: [build-binaries, package-helm]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -159,28 +160,33 @@ jobs:
             ```bash
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz
             tar -xzf maia-${{ steps.version.outputs.VERSION }}-darwin-arm64.tar.gz
-            sudo mv maia maiactl maia-mcp /usr/local/bin/
+            sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
             ```
 
             ### macOS (Intel)
             ```bash
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz
             tar -xzf maia-${{ steps.version.outputs.VERSION }}-darwin-amd64.tar.gz
-            sudo mv maia maiactl maia-mcp /usr/local/bin/
+            sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
             ```
 
             ### Linux (x86_64)
             ```bash
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
             tar -xzf maia-${{ steps.version.outputs.VERSION }}-linux-amd64.tar.gz
-            sudo mv maia maiactl maia-mcp /usr/local/bin/
+            sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
             ```
 
             ### Linux (ARM64)
             ```bash
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
             tar -xzf maia-${{ steps.version.outputs.VERSION }}-linux-arm64.tar.gz
-            sudo mv maia maiactl maia-mcp /usr/local/bin/
+            sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+            ```
+
+            ### Helm Chart
+            ```bash
+            helm install maia https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-chart-${{ steps.version.outputs.VERSION }}.tgz
             ```
 
             ### Windows
@@ -202,6 +208,41 @@ jobs:
             artifacts/checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  package-helm:
+    name: Package Helm Chart
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Get version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Update chart version
+        run: |
+          sed -i "s/^version:.*/version: ${{ steps.version.outputs.VERSION }}/" deployments/helm/maia/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.VERSION }}\"/" deployments/helm/maia/Chart.yaml
+
+      - name: Package Helm chart
+        run: |
+          mkdir -p dist
+          helm package deployments/helm/maia -d dist
+          mv dist/maia-*.tgz dist/maia-chart-${{ steps.version.outputs.VERSION }}.tgz
+
+      - name: Upload Helm chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart
+          path: dist/maia-chart-*.tgz
+          retention-days: 1
 
   build-docker:
     name: Build and Push Docker Image

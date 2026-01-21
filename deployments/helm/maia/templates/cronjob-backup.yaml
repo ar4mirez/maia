@@ -1,0 +1,118 @@
+{{- if .Values.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "maia.fullname" . }}-backup
+  labels:
+    {{- include "maia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.backup.successfulJobsHistoryLimit | default 3 }}
+  failedJobsHistoryLimit: {{ .Values.backup.failedJobsHistoryLimit | default 3 }}
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            {{- include "maia.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+        spec:
+          restartPolicy: OnFailure
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          serviceAccountName: {{ include "maia.serviceAccountName" . }}
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: backup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Create backup using migrate tool export
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/backups/maia_backup_${TIMESTAMP}.json"
+
+                  echo "Starting backup at $(date)"
+                  echo "Exporting data to ${BACKUP_FILE}"
+
+                  # Use migrate export command
+                  /app/migrate export \
+                    --data-dir {{ .Values.maia.storage.dataDir }} \
+                    --output "${BACKUP_FILE}"
+
+                  # Compress backup
+                  {{- if .Values.backup.compress }}
+                  gzip "${BACKUP_FILE}"
+                  BACKUP_FILE="${BACKUP_FILE}.gz"
+                  {{- end }}
+
+                  # Calculate checksum
+                  sha256sum "${BACKUP_FILE}" > "${BACKUP_FILE}.sha256"
+
+                  # Cleanup old backups
+                  find /backups -name "maia_backup_*.json*" -type f -mtime +{{ .Values.backup.retentionDays }} -delete
+
+                  echo "Backup completed: ${BACKUP_FILE}"
+                  echo "Checksum: $(cat ${BACKUP_FILE}.sha256)"
+                  ls -lh /backups/
+              env:
+                - name: MAIA_STORAGE_DATA_DIR
+                  value: {{ .Values.maia.storage.dataDir | quote }}
+              volumeMounts:
+                - name: data
+                  mountPath: {{ .Values.maia.storage.dataDir }}
+                  readOnly: true
+                - name: backups
+                  mountPath: /backups
+              resources:
+                {{- toYaml .Values.backup.resources | nindent 16 }}
+          volumes:
+            - name: data
+              {{- if .Values.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "maia.fullname" . }}
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+            - name: backups
+              {{- if .Values.backup.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "maia.fullname" . }}-backups
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+{{- if .Values.backup.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "maia.fullname" . }}-backups
+  labels:
+    {{- include "maia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  accessModes:
+    - {{ .Values.backup.persistence.accessMode | default "ReadWriteOnce" }}
+  {{- if .Values.backup.persistence.storageClass }}
+  storageClassName: {{ .Values.backup.persistence.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.backup.persistence.size | default "20Gi" }}
+{{- end }}
+{{- end }}

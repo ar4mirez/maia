@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "maia.fullname" . }}
+  labels:
+    {{- include "maia.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "maia.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "maia.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "maia.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            # Log configuration
+            - name: MAIA_LOG_LEVEL
+              value: {{ .Values.maia.log.level | quote }}
+            - name: MAIA_LOG_FORMAT
+              value: {{ .Values.maia.log.format | quote }}
+            # Storage configuration
+            - name: MAIA_STORAGE_DATA_DIR
+              value: {{ .Values.maia.storage.dataDir | quote }}
+            - name: MAIA_STORAGE_SYNC_WRITES
+              value: {{ .Values.maia.storage.syncWrites | quote }}
+            - name: MAIA_STORAGE_GC_INTERVAL
+              value: {{ .Values.maia.storage.gcInterval | quote }}
+            # Security configuration
+            {{- if or .Values.maia.security.apiKey .Values.maia.security.existingSecret }}
+            - name: MAIA_SECURITY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "maia.apiKeySecretName" . }}
+                  key: {{ .Values.maia.security.existingSecretKey }}
+            {{- end }}
+            # Embedding configuration
+            - name: MAIA_EMBEDDING_MODEL
+              value: {{ .Values.maia.embedding.model | quote }}
+            {{- if or .Values.maia.embedding.openai.apiKey .Values.maia.embedding.openai.existingSecret }}
+            - name: MAIA_EMBEDDING_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "maia.openaiSecretName" . }}
+                  key: {{ .Values.maia.embedding.openai.existingSecretKey }}
+            {{- end }}
+            # Multi-tenancy configuration
+            - name: MAIA_TENANT_ENABLED
+              value: {{ .Values.maia.tenant.enabled | quote }}
+            - name: MAIA_TENANT_REQUIRE_TENANT
+              value: {{ .Values.maia.tenant.requireTenant | quote }}
+            - name: MAIA_TENANT_DEFAULT_TENANT_ID
+              value: {{ .Values.maia.tenant.defaultTenantId | quote }}
+            {{- if .Values.maia.tenant.dedicatedStorageDir }}
+            - name: MAIA_TENANT_DEDICATED_STORAGE_DIR
+              value: {{ .Values.maia.tenant.dedicatedStorageDir | quote }}
+            {{- end }}
+            - name: MAIA_TENANT_ENFORCE_SCOPES_ENABLED
+              value: {{ .Values.maia.tenant.enforceScopesEnabled | quote }}
+            # Rate limiting
+            - name: MAIA_RATE_LIMIT_ENABLED
+              value: {{ .Values.maia.rateLimit.enabled | quote }}
+            - name: MAIA_RATE_LIMIT_REQUESTS_PER_SECOND
+              value: {{ .Values.maia.rateLimit.requestsPerSecond | quote }}
+            - name: MAIA_RATE_LIMIT_BURST
+              value: {{ .Values.maia.rateLimit.burst | quote }}
+            # Server configuration
+            - name: MAIA_SERVER_READ_TIMEOUT
+              value: {{ .Values.maia.server.readTimeout | quote }}
+            - name: MAIA_SERVER_WRITE_TIMEOUT
+              value: {{ .Values.maia.server.writeTimeout | quote }}
+            - name: MAIA_SERVER_IDLE_TIMEOUT
+              value: {{ .Values.maia.server.idleTimeout | quote }}
+            - name: MAIA_SERVER_MAX_HEADER_BYTES
+              value: {{ .Values.maia.server.maxHeaderBytes | quote }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.healthCheck.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.healthCheck.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.maia.storage.dataDir }}
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "maia.fullname" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

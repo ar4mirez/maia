@@ -1,0 +1,277 @@
+groups:
+  - name: maia_tenant_quota_alerts
+    rules:
+      # Quota Usage Alerts - Warning level (70%)
+      - alert: TenantMemoryQuotaWarning
+        expr: maia_tenant_quota_usage_ratio{resource="memories"} > 0.7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} approaching memory quota"
+          description: "Tenant {{ $labels.tenant_id }} has used {{ $value | humanizePercentage }} of their memory quota."
+
+      - alert: TenantStorageQuotaWarning
+        expr: maia_tenant_quota_usage_ratio{resource="storage"} > 0.7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} approaching storage quota"
+          description: "Tenant {{ $labels.tenant_id }} has used {{ $value | humanizePercentage }} of their storage quota."
+
+      - alert: TenantRPMQuotaWarning
+        expr: maia_tenant_quota_usage_ratio{resource="rpm"} > 0.7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} approaching RPM limit"
+          description: "Tenant {{ $labels.tenant_id }} is using {{ $value | humanizePercentage }} of their requests per minute limit."
+
+      # Quota Usage Alerts - Critical level (85%)
+      - alert: TenantMemoryQuotaCritical
+        expr: maia_tenant_quota_usage_ratio{resource="memories"} > 0.85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} memory quota critical"
+          description: "Tenant {{ $labels.tenant_id }} has used {{ $value | humanizePercentage }} of their memory quota. Immediate action required."
+
+      - alert: TenantStorageQuotaCritical
+        expr: maia_tenant_quota_usage_ratio{resource="storage"} > 0.85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} storage quota critical"
+          description: "Tenant {{ $labels.tenant_id }} has used {{ $value | humanizePercentage }} of their storage quota. Immediate action required."
+
+      - alert: TenantRPMQuotaCritical
+        expr: maia_tenant_quota_usage_ratio{resource="rpm"} > 0.85
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} RPM limit critical"
+          description: "Tenant {{ $labels.tenant_id }} is using {{ $value | humanizePercentage }} of their requests per minute limit."
+
+      # Quota Exhausted Alerts (95%)
+      - alert: TenantMemoryQuotaExhausted
+        expr: maia_tenant_quota_usage_ratio{resource="memories"} > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          pager: "true"
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} memory quota exhausted"
+          description: "Tenant {{ $labels.tenant_id }} has exhausted their memory quota ({{ $value | humanizePercentage }}). New memories will be rejected."
+
+      - alert: TenantStorageQuotaExhausted
+        expr: maia_tenant_quota_usage_ratio{resource="storage"} > 0.95
+        for: 1m
+        labels:
+          severity: critical
+          pager: "true"
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} storage quota exhausted"
+          description: "Tenant {{ $labels.tenant_id }} has exhausted their storage quota ({{ $value | humanizePercentage }}). New data will be rejected."
+
+  - name: maia_error_rate_alerts
+    rules:
+      # High Error Rates
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(maia_http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(maia_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum(rate(maia_http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(maia_http_requests_total[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes. Immediate investigation required."
+
+      # Tenant-specific error rates
+      - alert: TenantHighErrorRate
+        expr: |
+          sum by (tenant_id) (rate(maia_tenant_requests_total{status=~"5.."}[5m]))
+          / sum by (tenant_id) (rate(maia_tenant_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate for tenant {{ $labels.tenant_id }}"
+          description: "Tenant {{ $labels.tenant_id }} is experiencing {{ $value | humanizePercentage }} error rate."
+
+  - name: maia_latency_alerts
+    rules:
+      # Latency Alerts
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99, sum(rate(maia_http_request_duration_seconds_bucket[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P99 latency detected"
+          description: "P99 latency is {{ $value | humanizeDuration }}. Target is under 1 second."
+
+      - alert: CriticalP99Latency
+        expr: |
+          histogram_quantile(0.99, sum(rate(maia_http_request_duration_seconds_bucket[5m])) by (le)) > 3
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical P99 latency detected"
+          description: "P99 latency is {{ $value | humanizeDuration }}. Performance is severely degraded."
+
+      - alert: HighMemoryOperationLatency
+        expr: |
+          histogram_quantile(0.99, sum by (operation, le) (rate(maia_memory_operation_duration_seconds_bucket[5m]))) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory operation latency"
+          description: "Memory operation {{ $labels.operation }} P99 latency is {{ $value | humanizeDuration }}."
+
+      - alert: HighSearchLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(maia_search_duration_seconds_bucket[5m])) by (le)) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High search latency detected"
+          description: "Search P99 latency is {{ $value | humanizeDuration }}."
+
+      - alert: HighContextAssemblyLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(maia_context_assembly_duration_seconds_bucket[5m])) by (le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High context assembly latency"
+          description: "Context assembly P99 latency is {{ $value | humanizeDuration }}."
+
+  - name: maia_system_health_alerts
+    rules:
+      # System Health
+      - alert: NoRequests
+        expr: |
+          sum(rate(maia_http_requests_total[5m])) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No requests received"
+          description: "MAIA has not received any requests in the last 10 minutes. Check if the service is accessible."
+
+      - alert: HighInflightRequests
+        expr: maia_http_requests_in_flight > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of inflight requests"
+          description: "{{ $value }} requests are currently being processed. This may indicate slow processing or resource exhaustion."
+
+      - alert: CriticalInflightRequests
+        expr: maia_http_requests_in_flight > 500
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical number of inflight requests"
+          description: "{{ $value }} requests are being processed. System may be overloaded."
+
+      # Storage Health
+      - alert: StorageGrowthRate
+        expr: |
+          predict_linear(maia_storage_size_bytes[1h], 86400) > 10737418240
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Storage growing rapidly"
+          description: "At current rate, storage will exceed 10GB within 24 hours."
+
+      # Tenant Health
+      - alert: TenantSuspended
+        expr: maia_tenant_status{status="suspended"} == 1
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} is suspended"
+          description: "Tenant {{ $labels.tenant_id }} has been suspended. All requests will be rejected."
+
+      - alert: NoActiveTenants
+        expr: maia_tenants_active_total == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No active tenants"
+          description: "There are no active tenants in the system."
+
+  - name: maia_rate_limit_alerts
+    rules:
+      # Rate Limiting
+      - alert: TenantRateLimited
+        expr: |
+          sum by (tenant_id) (rate(maia_tenant_requests_total{status="429"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: info
+        annotations:
+          summary: "Tenant {{ $labels.tenant_id }} being rate limited"
+          description: "Tenant {{ $labels.tenant_id }} is hitting rate limits."
+
+      - alert: HighRateLimitedRequests
+        expr: |
+          sum(rate(maia_http_requests_total{status="429"}[5m]))
+          / sum(rate(maia_http_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate of rate-limited requests"
+          description: "{{ $value | humanizePercentage }} of requests are being rate limited."
+
+  - name: maia_api_key_alerts
+    rules:
+      # API Key Issues
+      - alert: HighAuthenticationFailures
+        expr: |
+          sum(rate(maia_http_requests_total{status="401"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High authentication failure rate"
+          description: "{{ $value }} authentication failures per second. Possible credential issues or attack."
+
+      - alert: HighAuthorizationFailures
+        expr: |
+          sum(rate(maia_http_requests_total{status="403"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High authorization failure rate"
+          description: "{{ $value }} authorization failures per second. Check API key scopes and permissions."

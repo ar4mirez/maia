@@ -1,12 +1,14 @@
 # MAIA - Memory AI Architecture
 # Build and development commands
 
-.PHONY: all build build-server build-cli build-mcp build-examples \
+.PHONY: all build build-server build-cli build-mcp build-migrate build-examples \
 	dev dev-mcp test test-short test-cover test-pkg bench \
 	lint fmt vet tidy deps generate clean clean-all \
-	docker-build docker-run proto install-tools check \
+	docker-build docker-run docker-compose-up docker-compose-down proto install-tools check \
 	install uninstall run-example-basic run-example-proxy run-example-multi-agent \
-	build-linux build-darwin build-windows build-all-platforms
+	build-linux build-darwin build-windows build-all-platforms \
+	helm-lint helm-template helm-package backup restore \
+	k8s-crds-install k8s-crds-uninstall
 
 # Go parameters
 GOCMD := go
@@ -21,6 +23,7 @@ GOFMT := gofmt
 BINARY_NAME := maia
 BINARY_CLI := maiactl
 BINARY_MCP := maia-mcp
+BINARY_MIGRATE := maia-migrate
 
 # Directories
 BUILD_DIR := ./build
@@ -86,10 +89,19 @@ help:
 	@grep -E '^## (dev|run|test|bench|lint|fmt|vet|tidy|deps|generate|check)' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
 	@echo ""
 	@echo "$(YELLOW)Installation Targets:$(NC)"
-	@grep -E '^## (install|uninstall)' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
+	@grep -E '^## (install|uninstall):' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
 	@echo ""
 	@echo "$(YELLOW)Docker Targets:$(NC)"
 	@grep -E '^## docker' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
+	@echo ""
+	@echo "$(YELLOW)Helm Chart Targets:$(NC)"
+	@grep -E '^## helm' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
+	@echo ""
+	@echo "$(YELLOW)Kubernetes CRD Targets:$(NC)"
+	@grep -E '^## k8s' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
+	@echo ""
+	@echo "$(YELLOW)Backup/Restore Targets:$(NC)"
+	@grep -E '^## (backup|restore)' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
 	@echo ""
 	@echo "$(YELLOW)Cleanup Targets:$(NC)"
 	@grep -E '^## clean' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
@@ -101,11 +113,11 @@ help:
 # Build Targets
 #=============================================================================
 
-## all: Build all binaries (server, CLI, MCP)
+## all: Build all binaries (server, CLI, MCP, migrate)
 all: build
 
 ## build: Build all main binaries for current platform
-build: build-server build-cli build-mcp
+build: build-server build-cli build-mcp build-migrate
 	@echo "$(GREEN)✓ All binaries built successfully in $(BUILD_DIR)$(NC)"
 
 ## build-server: Build the main MAIA server
@@ -125,6 +137,12 @@ build-mcp:
 	@echo "$(BLUE)Building $(BINARY_MCP)...$(NC)"
 	@mkdir -p $(BUILD_DIR)
 	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MCP) $(CMD_DIR)/mcp-server
+
+## build-migrate: Build the migration tool
+build-migrate:
+	@echo "$(BLUE)Building $(BINARY_MIGRATE)...$(NC)"
+	@mkdir -p $(BUILD_DIR)
+	$(GOBUILD) $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_MIGRATE) $(CMD_DIR)/migrate
 
 ## build-examples: Build all example binaries
 build-examples: build-example-basic build-example-proxy build-example-multi-agent
@@ -155,6 +173,7 @@ build-release:
 	$(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)/maia
 	$(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/$(BINARY_CLI) $(CMD_DIR)/maiactl
 	$(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/$(BINARY_MCP) $(CMD_DIR)/mcp-server
+	$(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/$(BINARY_MIGRATE) $(CMD_DIR)/migrate
 	@echo "$(GREEN)✓ Release binaries built successfully$(NC)"
 
 #=============================================================================
@@ -168,9 +187,11 @@ build-linux:
 	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-amd64/$(BINARY_NAME) $(CMD_DIR)/maia
 	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-amd64/$(BINARY_CLI) $(CMD_DIR)/maiactl
 	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-amd64/$(BINARY_MCP) $(CMD_DIR)/mcp-server
+	GOOS=linux GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-amd64/$(BINARY_MIGRATE) $(CMD_DIR)/migrate
 	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-arm64/$(BINARY_NAME) $(CMD_DIR)/maia
 	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-arm64/$(BINARY_CLI) $(CMD_DIR)/maiactl
 	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-arm64/$(BINARY_MCP) $(CMD_DIR)/mcp-server
+	GOOS=linux GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/linux-arm64/$(BINARY_MIGRATE) $(CMD_DIR)/migrate
 	@echo "$(GREEN)✓ Linux binaries built$(NC)"
 
 ## build-darwin: Build for macOS (amd64 and arm64)
@@ -180,9 +201,11 @@ build-darwin:
 	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-amd64/$(BINARY_NAME) $(CMD_DIR)/maia
 	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-amd64/$(BINARY_CLI) $(CMD_DIR)/maiactl
 	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-amd64/$(BINARY_MCP) $(CMD_DIR)/mcp-server
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-amd64/$(BINARY_MIGRATE) $(CMD_DIR)/migrate
 	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-arm64/$(BINARY_NAME) $(CMD_DIR)/maia
 	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-arm64/$(BINARY_CLI) $(CMD_DIR)/maiactl
 	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-arm64/$(BINARY_MCP) $(CMD_DIR)/mcp-server
+	GOOS=darwin GOARCH=arm64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/darwin-arm64/$(BINARY_MIGRATE) $(CMD_DIR)/migrate
 	@echo "$(GREEN)✓ macOS binaries built$(NC)"
 
 ## build-windows: Build for Windows (amd64)
@@ -192,6 +215,7 @@ build-windows:
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/windows-amd64/$(BINARY_NAME).exe $(CMD_DIR)/maia
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/windows-amd64/$(BINARY_CLI).exe $(CMD_DIR)/maiactl
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/windows-amd64/$(BINARY_MCP).exe $(CMD_DIR)/mcp-server
+	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS_RELEASE) -o $(BUILD_DIR)/windows-amd64/$(BINARY_MIGRATE).exe $(CMD_DIR)/migrate
 	@echo "$(GREEN)✓ Windows binaries built$(NC)"
 
 ## build-all-platforms: Build for all supported platforms
@@ -340,10 +364,12 @@ install: build
 	@install -m 755 $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_CLI) $(INSTALL_DIR)/$(BINARY_CLI)
 	@install -m 755 $(BUILD_DIR)/$(BINARY_MCP) $(INSTALL_DIR)/$(BINARY_MCP)
+	@install -m 755 $(BUILD_DIR)/$(BINARY_MIGRATE) $(INSTALL_DIR)/$(BINARY_MIGRATE)
 	@echo "$(GREEN)✓ Installed:$(NC)"
 	@echo "  - $(INSTALL_DIR)/$(BINARY_NAME)"
 	@echo "  - $(INSTALL_DIR)/$(BINARY_CLI)"
 	@echo "  - $(INSTALL_DIR)/$(BINARY_MCP)"
+	@echo "  - $(INSTALL_DIR)/$(BINARY_MIGRATE)"
 
 ## uninstall: Remove installed binaries from system
 uninstall:
@@ -351,6 +377,7 @@ uninstall:
 	@rm -f $(INSTALL_DIR)/$(BINARY_NAME)
 	@rm -f $(INSTALL_DIR)/$(BINARY_CLI)
 	@rm -f $(INSTALL_DIR)/$(BINARY_MCP)
+	@rm -f $(INSTALL_DIR)/$(BINARY_MIGRATE)
 	@echo "$(GREEN)✓ Uninstalled$(NC)"
 
 #=============================================================================
@@ -381,6 +408,127 @@ docker-push:
 	docker push $(DOCKER_REGISTRY)/maia:latest
 	@echo "$(GREEN)✓ Docker image pushed$(NC)"
 
+## docker-compose-up: Start all services with docker-compose
+docker-compose-up:
+	@echo "$(BLUE)Starting MAIA with docker-compose...$(NC)"
+	docker-compose up -d
+	@echo "$(GREEN)✓ MAIA is running at http://localhost:8080$(NC)"
+
+## docker-compose-up-monitoring: Start all services including monitoring stack
+docker-compose-up-monitoring:
+	@echo "$(BLUE)Starting MAIA with monitoring stack...$(NC)"
+	docker-compose --profile monitoring up -d
+	@echo "$(GREEN)✓ MAIA: http://localhost:8080$(NC)"
+	@echo "$(GREEN)✓ Prometheus: http://localhost:9091$(NC)"
+	@echo "$(GREEN)✓ Grafana: http://localhost:3000$(NC)"
+
+## docker-compose-down: Stop all docker-compose services
+docker-compose-down:
+	@echo "$(BLUE)Stopping docker-compose services...$(NC)"
+	docker-compose --profile monitoring down
+	@echo "$(GREEN)✓ Services stopped$(NC)"
+
+## docker-compose-logs: View docker-compose logs
+docker-compose-logs:
+	docker-compose logs -f
+
+#=============================================================================
+# Helm Chart Targets
+#=============================================================================
+
+## helm-lint: Lint the Helm chart
+helm-lint:
+	@echo "$(BLUE)Linting Helm chart...$(NC)"
+	helm lint deployments/helm/maia
+	@echo "$(GREEN)✓ Helm chart is valid$(NC)"
+
+## helm-template: Render Helm chart templates locally
+helm-template:
+	@echo "$(BLUE)Rendering Helm templates...$(NC)"
+	helm template maia deployments/helm/maia
+
+## helm-package: Package Helm chart for distribution
+helm-package:
+	@echo "$(BLUE)Packaging Helm chart...$(NC)"
+	@mkdir -p $(BUILD_DIR)/helm
+	helm package deployments/helm/maia -d $(BUILD_DIR)/helm
+	@echo "$(GREEN)✓ Helm chart packaged to $(BUILD_DIR)/helm$(NC)"
+
+## helm-install: Install MAIA using Helm (requires running Kubernetes cluster)
+helm-install:
+	@echo "$(BLUE)Installing MAIA via Helm...$(NC)"
+	helm install maia deployments/helm/maia
+	@echo "$(GREEN)✓ MAIA installed$(NC)"
+
+## helm-upgrade: Upgrade MAIA Helm release
+helm-upgrade:
+	@echo "$(BLUE)Upgrading MAIA Helm release...$(NC)"
+	helm upgrade maia deployments/helm/maia
+	@echo "$(GREEN)✓ MAIA upgraded$(NC)"
+
+## helm-uninstall: Uninstall MAIA Helm release
+helm-uninstall:
+	@echo "$(BLUE)Uninstalling MAIA Helm release...$(NC)"
+	helm uninstall maia
+	@echo "$(GREEN)✓ MAIA uninstalled$(NC)"
+
+#=============================================================================
+# Kubernetes CRD Targets
+#=============================================================================
+
+## k8s-crds-install: Install MAIA CRDs to Kubernetes cluster
+k8s-crds-install:
+	@echo "$(BLUE)Installing MAIA CRDs...$(NC)"
+	kubectl apply -k deployments/kubernetes/crds
+	@echo "$(GREEN)✓ CRDs installed$(NC)"
+
+## k8s-crds-uninstall: Remove MAIA CRDs from Kubernetes cluster
+k8s-crds-uninstall:
+	@echo "$(BLUE)Removing MAIA CRDs...$(NC)"
+	kubectl delete -k deployments/kubernetes/crds
+	@echo "$(GREEN)✓ CRDs removed$(NC)"
+
+## k8s-examples: Apply example Kubernetes resources
+k8s-examples:
+	@echo "$(BLUE)Applying example resources...$(NC)"
+	kubectl apply -f deployments/kubernetes/examples/
+	@echo "$(GREEN)✓ Examples applied$(NC)"
+
+#=============================================================================
+# Backup and Restore Targets
+#=============================================================================
+
+## backup: Create a backup of MAIA data
+backup:
+	@echo "$(BLUE)Creating backup...$(NC)"
+	./scripts/backup.sh --data-dir ./data --output-dir ./backups --compress
+	@echo "$(GREEN)✓ Backup complete$(NC)"
+
+## backup-encrypted: Create an encrypted backup (requires GPG_RECIPIENT)
+backup-encrypted:
+	@if [ -z "$(GPG_RECIPIENT)" ]; then \
+		echo "$(YELLOW)GPG_RECIPIENT not set. Usage: GPG_RECIPIENT=admin@example.com make backup-encrypted$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Creating encrypted backup...$(NC)"
+	./scripts/backup.sh --data-dir ./data --output-dir ./backups --compress --encrypt
+	@echo "$(GREEN)✓ Encrypted backup complete$(NC)"
+
+## restore: Restore from a backup file (usage: make restore BACKUP=backups/maia_backup_xxx.tar.gz)
+restore:
+	@if [ -z "$(BACKUP)" ]; then \
+		echo "$(YELLOW)Usage: make restore BACKUP=backups/maia_backup_xxx.tar.gz$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Restoring from $(BACKUP)...$(NC)"
+	./scripts/restore.sh --data-dir ./data $(BACKUP)
+	@echo "$(GREEN)✓ Restore complete$(NC)"
+
+## backup-list: List available backups
+backup-list:
+	@echo "$(BLUE)Available backups:$(NC)"
+	@ls -lh ./backups/*.tar* 2>/dev/null || echo "  No backups found in ./backups/"
+
 #=============================================================================
 # Cleanup Targets
 #=============================================================================
@@ -397,7 +545,7 @@ clean:
 ## clean-all: Clean everything including root binaries and cache
 clean-all: clean
 	@echo "$(BLUE)Cleaning root binaries and cache...$(NC)"
-	@rm -f ./maia ./maiactl ./maia-mcp ./mcp-server
+	@rm -f ./maia ./maiactl ./maia-mcp ./mcp-server ./migrate ./maia-migrate
 	@rm -f ./basic-usage ./proxy-usage ./multi-agent
 	@$(GOCMD) clean -cache -testcache
 	@echo "$(GREEN)✓ Full clean complete$(NC)"

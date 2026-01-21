@@ -11,7 +11,9 @@ This guide covers deploying MAIA in various environments, from local development
 | Binary | Development, testing | Low |
 | Docker | Single-node production | Low |
 | Docker Compose | Local development with monitoring | Medium |
-| Kubernetes | Production, high availability | High |
+| Helm Chart | Production Kubernetes | Medium |
+| Kubernetes (Kustomize) | Custom Kubernetes deployments | Medium |
+| Kubernetes CRDs | Cloud-native, operator-managed | High |
 
 ---
 
@@ -20,10 +22,14 @@ This guide covers deploying MAIA in various environments, from local development
 ### Build
 
 ```bash
-# Build for current platform
+# Build all binaries for current platform
+make build
+
+# Or build individually
 go build -o maia ./cmd/maia
 go build -o maiactl ./cmd/maiactl
-go build -o maia-mcp-server ./cmd/mcp-server
+go build -o maia-mcp ./cmd/mcp-server
+go build -o maia-migrate ./cmd/migrate
 
 # Build for specific platform
 GOOS=linux GOARCH=amd64 go build -o maia-linux-amd64 ./cmd/maia
@@ -249,21 +255,232 @@ scrape_configs:
 ### Start Services
 
 ```bash
+# Basic deployment
 docker-compose up -d
+
+# With monitoring (Prometheus, Grafana, Jaeger)
+docker-compose --profile monitoring up -d
+
+# View logs
 docker-compose logs -f maia
+
+# Stop all services
+docker-compose down
 ```
 
 ---
 
-## Kubernetes Deployment
+## Helm Chart Deployment
+
+The recommended way to deploy MAIA on Kubernetes.
 
 ### Prerequisites
+
+- Kubernetes 1.25+
+- Helm 3.10+
+- kubectl configured
+
+### Quick Start
+
+```bash
+# Install from GitHub release
+helm install maia https://github.com/ar4mirez/maia/releases/latest/download/maia-chart.tgz
+
+# Or install from source
+helm install maia ./deployments/helm/maia -n maia-system --create-namespace
+```
+
+### Custom Values
+
+Create a custom `values.yaml`:
+
+```yaml
+# values.yaml
+replicaCount: 2
+
+image:
+  repository: ghcr.io/ar4mirez/maia
+  tag: "latest"
+
+config:
+  logLevel: info
+  dataDir: /data
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: standard
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: maia.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: maia-tls
+      hosts:
+        - maia.example.com
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention: 7
+
+serviceMonitor:
+  enabled: true
+```
+
+Install with custom values:
+
+```bash
+helm install maia ./deployments/helm/maia -f values.yaml -n maia-system --create-namespace
+```
+
+### Upgrade
+
+```bash
+helm upgrade maia ./deployments/helm/maia -f values.yaml -n maia-system
+```
+
+### Uninstall
+
+```bash
+helm uninstall maia -n maia-system
+```
+
+---
+
+## Kubernetes CRDs
+
+MAIA provides Custom Resource Definitions for cloud-native deployments.
+
+### Install CRDs
+
+```bash
+# Install all CRDs
+kubectl apply -k deployments/kubernetes/crds/
+
+# Or install individually
+kubectl apply -f deployments/kubernetes/crds/maia.cuemby.com_maiainstances.yaml
+kubectl apply -f deployments/kubernetes/crds/maia.cuemby.com_maiatenants.yaml
+```
+
+### MaiaInstance Resource
+
+Create a MAIA instance:
+
+```yaml
+# basic-instance.yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia-production
+  namespace: maia-system
+spec:
+  replicas: 2
+  image:
+    repository: ghcr.io/ar4mirez/maia
+    tag: latest
+  config:
+    logLevel: info
+    httpPort: 8080
+    dataDir: /data
+  storage:
+    size: 50Gi
+    storageClass: fast-ssd
+  resources:
+    limits:
+      cpu: "2"
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+```
+
+```bash
+kubectl apply -f basic-instance.yaml
+```
+
+### MaiaTenant Resource
+
+Create tenants:
+
+```yaml
+# tenant.yaml
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaTenant
+metadata:
+  name: acme-corp
+  namespace: maia-system
+spec:
+  instanceRef:
+    name: maia-production
+  displayName: "Acme Corporation"
+  plan: enterprise
+  quotas:
+    maxMemories: 1000000
+    maxStorageBytes: 107374182400  # 100GB
+    maxNamespaces: 100
+    requestsPerMinute: 1000
+    requestsPerDay: 100000
+  config:
+    defaultTokenBudget: 8000
+    maxTokenBudget: 32000
+  apiKeys:
+    - name: admin-key
+      secretRef:
+        name: acme-corp-api-key
+        key: api-key
+      scopes: ["*"]
+```
+
+```bash
+kubectl apply -f tenant.yaml
+```
+
+### Examples
+
+More examples available in `deployments/kubernetes/examples/`:
+
+```bash
+# Basic instance
+kubectl apply -f deployments/kubernetes/examples/basic-instance.yaml
+
+# Production instance with HA
+kubectl apply -f deployments/kubernetes/examples/production-instance.yaml
+
+# Multi-tenant setup
+kubectl apply -f deployments/kubernetes/examples/tenant-example.yaml
+```
+
+---
+
+## Kubernetes Deployment (Kustomize)
+
+### Kustomize Prerequisites
 
 - Kubernetes 1.25+
 - kubectl configured
 - Storage class for persistent volumes
 
-### Basic Deployment
+### Basic Kustomize Deployment
 
 ```yaml
 # deployment.yaml
@@ -578,11 +795,51 @@ spec:
 
 ## Backup and Recovery
 
-### Backup Strategy
+MAIA includes automated backup and restore scripts in the `scripts/` directory.
+
+### Using Backup Scripts
+
+```bash
+# Create a backup
+./scripts/backup.sh ./data ./backups
+
+# Create an encrypted backup (will prompt for password)
+./scripts/backup.sh ./data ./backups --encrypt
+
+# Using Makefile
+make backup
+make backup-encrypted
+```
+
+The backup script:
+
+- Creates timestamped compressed archives
+- Validates backup integrity with checksums
+- Supports optional AES-256 encryption
+- Maintains backup metadata
+
+### Using Restore Scripts
+
+```bash
+# Restore from backup (will stop MAIA, restore, and restart)
+./scripts/restore.sh ./backups/maia-backup-20260120-120000.tar.gz ./data
+
+# Using Makefile
+make restore BACKUP_FILE=./backups/maia-backup-20260120-120000.tar.gz
+```
+
+The restore script:
+
+- Validates backup integrity before restoring
+- Creates a backup of current data before overwriting
+- Handles encrypted backups automatically
+- Verifies restore success
+
+### Manual Backup Strategy
 
 ```bash
 #!/bin/bash
-# backup.sh
+# Custom backup script
 
 DATE=$(date +%Y%m%d-%H%M%S)
 BACKUP_DIR=/backups/maia
@@ -598,27 +855,6 @@ aws s3 cp "$BACKUP_DIR/maia-data-$DATE.tar.gz" s3://backups/maia/
 
 # Resume writes
 # curl -X DELETE http://localhost:8080/admin/maintenance
-```
-
-### Recovery
-
-```bash
-#!/bin/bash
-# restore.sh
-
-BACKUP_FILE=$1
-
-# Stop MAIA
-systemctl stop maia
-
-# Clear existing data
-rm -rf /var/lib/maia/*
-
-# Restore from backup
-tar -xzf "$BACKUP_FILE" -C /
-
-# Start MAIA
-systemctl start maia
 ```
 
 ### Kubernetes Backup (Velero)
@@ -637,6 +873,87 @@ spec:
     storageLocation: default
     volumeSnapshotLocations:
       - default
+```
+
+### Helm Chart Backup CronJob
+
+When using the Helm chart, enable automated backups:
+
+```yaml
+# values.yaml
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: 7           # Keep 7 days of backups
+  storage:
+    type: pvc           # pvc, s3, gcs
+    pvc:
+      size: 50Gi
+```
+
+---
+
+## Database Migrations
+
+The `maia-migrate` tool handles database schema migrations.
+
+### Running Migrations
+
+```bash
+# Run all pending migrations
+maia-migrate up
+
+# Rollback last migration
+maia-migrate down
+
+# Check migration status
+maia-migrate status
+
+# Migrate to a specific version
+maia-migrate goto 5
+
+# Force set version (use with caution)
+maia-migrate force 3
+```
+
+### Migration Configuration
+
+```bash
+# Using environment variables
+export MAIA_DATA_DIR=/var/lib/maia
+maia-migrate up
+
+# Using config file
+maia-migrate --config /etc/maia/config.yaml up
+```
+
+### Kubernetes Migration Job
+
+For Kubernetes deployments, run migrations as a Job:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: maia-migrate
+spec:
+  template:
+    spec:
+      containers:
+        - name: migrate
+          image: ghcr.io/ar4mirez/maia:latest
+          command: ["maia-migrate", "up"]
+          env:
+            - name: MAIA_DATA_DIR
+              value: /data
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      restartPolicy: Never
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: maia-data
 ```
 
 ---

@@ -1,0 +1,139 @@
+---
+# Example tenants for a multi-tenant MAIA deployment
+apiVersion: v1
+kind: Secret
+metadata:
+  name: acme-corp-api-key
+  namespace: maia-system
+type: Opaque
+stringData:
+  api-key: "maia_acme_key_abc123"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: acme-corp-readonly-key
+  namespace: maia-system
+type: Opaque
+stringData:
+  api-key: "maia_acme_readonly_xyz789"
+---
+# Enterprise tenant with high quotas
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaTenant
+metadata:
+  name: acme-corp
+  namespace: maia-system
+spec:
+  instanceRef:
+    name: maia-production
+  displayName: "Acme Corporation"
+  plan: enterprise
+  quotas:
+    maxMemories: 1000000
+    maxStorageBytes: 107374182400  # 100GB
+    maxNamespaces: 100
+    requestsPerMinute: 1000
+    requestsPerDay: 100000
+  config:
+    defaultTokenBudget: 8000
+    maxTokenBudget: 32000
+    features:
+      inference: true
+      vectorSearch: true
+      fullTextSearch: true
+      contextAssembly: true
+  apiKeys:
+    - name: admin-key
+      secretRef:
+        name: acme-corp-api-key
+        key: api-key
+      scopes: ["*"]
+    - name: readonly-key
+      secretRef:
+        name: acme-corp-readonly-key
+        key: api-key
+      scopes: ["read", "search", "context"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: startup-xyz-api-key
+  namespace: maia-system
+type: Opaque
+stringData:
+  api-key: "maia_startup_key_def456"
+---
+# Starter tier tenant with moderate quotas
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaTenant
+metadata:
+  name: startup-xyz
+  namespace: maia-system
+spec:
+  instanceRef:
+    name: maia-production
+  displayName: "Startup XYZ"
+  plan: starter
+  quotas:
+    maxMemories: 10000
+    maxStorageBytes: 1073741824  # 1GB
+    maxNamespaces: 5
+    requestsPerMinute: 60
+    requestsPerDay: 5000
+  config:
+    defaultTokenBudget: 4000
+    maxTokenBudget: 8000
+    features:
+      inference: false
+      vectorSearch: true
+      fullTextSearch: true
+      contextAssembly: true
+  apiKeys:
+    - name: default
+      secretRef:
+        name: startup-xyz-api-key
+        key: api-key
+      scopes: ["read", "write", "search", "context"]
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: demo-tenant-api-key
+  namespace: maia-system
+type: Opaque
+stringData:
+  api-key: "maia_demo_key_ghi789"
+---
+# Free tier demo tenant
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaTenant
+metadata:
+  name: demo-tenant
+  namespace: maia-system
+spec:
+  instanceRef:
+    name: maia-production
+  displayName: "Demo Tenant"
+  plan: free
+  quotas:
+    maxMemories: 100
+    maxStorageBytes: 10485760  # 10MB
+    maxNamespaces: 1
+    requestsPerMinute: 10
+    requestsPerDay: 100
+  config:
+    defaultTokenBudget: 2000
+    maxTokenBudget: 4000
+    features:
+      inference: false
+      vectorSearch: true
+      fullTextSearch: false
+      contextAssembly: true
+  apiKeys:
+    - name: demo-key
+      secretRef:
+        name: demo-tenant-api-key
+        key: api-key
+      scopes: ["read", "write", "context"]
+      expiresAt: "2026-12-31T23:59:59Z"

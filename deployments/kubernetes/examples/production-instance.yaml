@@ -1,0 +1,91 @@
+---
+# Production MAIA Instance - Multi-tenant with full features
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: maia-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: maia-api-key
+  namespace: maia-system
+type: Opaque
+stringData:
+  api-key: "your-secure-api-key-here"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: maia-openai
+  namespace: maia-system
+type: Opaque
+stringData:
+  openai-api-key: "sk-your-openai-key-here"
+---
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia-production
+  namespace: maia-system
+spec:
+  replicas: 3
+  image:
+    repository: ghcr.io/ar4mirez/maia
+    tag: latest
+    pullPolicy: IfNotPresent
+  storage:
+    size: 100Gi
+    storageClassName: fast-ssd
+    dataDir: /data
+    syncWrites: true
+    gcInterval: 10m
+  security:
+    apiKeySecretRef:
+      name: maia-api-key
+      key: api-key
+  embedding:
+    model: openai
+    openaiSecretRef:
+      name: maia-openai
+      key: openai-api-key
+  tenancy:
+    enabled: true
+    requireTenant: true
+    enforceScopesEnabled: true
+    dedicatedStorage: true
+  rateLimit:
+    enabled: true
+    requestsPerSecond: 100
+    burst: 200
+  logging:
+    level: info
+    format: json
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      labels:
+        release: prometheus
+  ingress:
+    enabled: true
+    className: nginx
+    host: maia.example.com
+    tls: true
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+  resources:
+    limits:
+      cpu: "4"
+      memory: 8Gi
+    requests:
+      cpu: "1"
+      memory: 2Gi
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"
+    retentionDays: 30
+    storageSize: 50Gi
+    compress: true

@@ -14,16 +14,42 @@ An AI-native distributed memory system that acts as an intelligent interceptor b
 
 ### Prerequisites
 
-- Go 1.22 or later
+- Go 1.23 or later
 
 ### Installation
+
+#### Download Pre-built Binaries
+
+```bash
+# macOS (Apple Silicon)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-darwin-arm64.tar.gz
+tar -xzf maia-darwin-arm64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+
+# macOS (Intel)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-darwin-amd64.tar.gz
+tar -xzf maia-darwin-amd64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+
+# Linux (x86_64)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-linux-amd64.tar.gz
+tar -xzf maia-linux-amd64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+
+# Linux (ARM64)
+curl -LO https://github.com/ar4mirez/maia/releases/latest/download/maia-linux-arm64.tar.gz
+tar -xzf maia-linux-arm64.tar.gz
+sudo mv maia maiactl maia-mcp maia-migrate /usr/local/bin/
+```
+
+#### Build from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/ar4mirez/maia.git
 cd maia
 
-# Build
+# Build all binaries
 make build
 
 # Or run directly
@@ -355,16 +381,41 @@ async with AsyncMAIAClient() as client:
 docker build -t maia .
 
 # Run
-docker run -p 8080:8080 -v maia-data:/data maia
+docker run -p 8080:8080 -v maia-data:/data ghcr.io/ar4mirez/maia:latest
 ```
 
 ### Docker Compose
 
 ```bash
+# Basic deployment
 docker-compose up -d
+
+# With monitoring (Prometheus, Grafana, Jaeger)
+docker-compose --profile monitoring up -d
+
+# View logs
+docker-compose logs -f maia
 ```
 
-### Kubernetes
+### Helm Chart
+
+The recommended way to deploy MAIA on Kubernetes:
+
+```bash
+# Install from release
+helm install maia https://github.com/ar4mirez/maia/releases/latest/download/maia-chart.tgz
+
+# Or install from source
+helm install maia ./deployments/helm/maia
+
+# With custom values
+helm install maia ./deployments/helm/maia -f my-values.yaml
+
+# Upgrade
+helm upgrade maia ./deployments/helm/maia
+```
+
+### Kubernetes (Kustomize)
 
 Kubernetes manifests are available in `deployments/kubernetes/`:
 
@@ -373,11 +424,29 @@ Kubernetes manifests are available in `deployments/kubernetes/`:
 kubectl apply -k deployments/kubernetes/
 
 # Or apply individually
+kubectl apply -f deployments/kubernetes/namespace.yaml
 kubectl apply -f deployments/kubernetes/configmap.yaml
 kubectl apply -f deployments/kubernetes/secret.yaml
 kubectl apply -f deployments/kubernetes/deployment.yaml
 kubectl apply -f deployments/kubernetes/service.yaml
 ```
+
+### Kubernetes CRDs
+
+MAIA provides Custom Resource Definitions for cloud-native deployments:
+
+```bash
+# Install CRDs
+kubectl apply -k deployments/kubernetes/crds/
+
+# Create a MAIA instance
+kubectl apply -f deployments/kubernetes/examples/basic-instance.yaml
+
+# Create tenants
+kubectl apply -f deployments/kubernetes/examples/tenant-example.yaml
+```
+
+See `deployments/kubernetes/examples/` for more CRD examples.
 
 ## Metrics & Monitoring
 
@@ -388,6 +457,90 @@ MAIA exposes Prometheus metrics at `/metrics`:
 - `maia_memory_operations_total` - Memory operations count
 - `maia_search_operations_total` - Search operations count
 - `maia_context_assembly_duration_seconds` - Context assembly latency
+- `maia_tenant_memories_total` - Memories per tenant
+- `maia_tenant_storage_bytes` - Storage usage per tenant
+- `maia_tenant_quota_usage_ratio` - Quota usage ratios
+
+### Prometheus Alerting
+
+Prometheus alerting rules are available in `deployments/prometheus/alerts.yaml`.
+
+### Grafana Dashboards
+
+Pre-built Grafana dashboards are available in `deployments/grafana/dashboards/`.
+
+## Backup & Restore
+
+MAIA includes backup and restore utilities:
+
+```bash
+# Create a backup
+./scripts/backup.sh ./data ./backups
+
+# Create an encrypted backup
+./scripts/backup.sh ./data ./backups --encrypt
+
+# Restore from backup
+./scripts/restore.sh ./backups/maia-backup-20260120-120000.tar.gz ./data
+
+# List backups
+ls -la ./backups/
+```
+
+Using Makefile:
+
+```bash
+# Backup
+make backup
+
+# Encrypted backup
+make backup-encrypted
+
+# Restore (interactive)
+make restore BACKUP_FILE=./backups/maia-backup-20260120-120000.tar.gz
+```
+
+## Database Migrations
+
+The `maia-migrate` tool handles database migrations:
+
+```bash
+# Run pending migrations
+maia-migrate up
+
+# Rollback last migration
+maia-migrate down
+
+# Check migration status
+maia-migrate status
+
+# Run to a specific version
+maia-migrate goto 5
+```
+
+## Audit Logging
+
+MAIA provides comprehensive audit logging for compliance and security:
+
+- All memory operations (create, read, update, delete, search)
+- Tenant and namespace management
+- Authentication events
+- Context assembly requests
+
+Configure audit logging in `config.yaml`:
+
+```yaml
+audit:
+  enabled: true
+  level: write  # all, write, admin
+  backend:
+    type: file
+    file_path: ./logs/audit.log
+  redact_fields:
+    - password
+    - api_key
+    - secret
+```
 
 ## Architecture
 
@@ -461,16 +614,27 @@ maia/
 ├── cmd/
 │   ├── maia/           # Main server binary
 │   ├── maiactl/        # CLI tool
-│   └── mcp-server/     # Standalone MCP server
+│   ├── mcp-server/     # Standalone MCP server
+│   └── migrate/        # Database migration tool
 ├── internal/
+│   ├── audit/          # Audit logging
 │   ├── config/         # Configuration management
 │   ├── server/         # HTTP/gRPC server
 │   ├── storage/        # Storage layer (BadgerDB)
+│   ├── tenant/         # Multi-tenancy
 │   └── ...
 ├── pkg/
 │   ├── maia/           # Go SDK (public)
 │   ├── mcp/            # MCP implementation
 │   └── proxy/          # OpenAI proxy
+├── deployments/
+│   ├── helm/           # Helm chart
+│   ├── kubernetes/     # Kubernetes manifests & CRDs
+│   ├── prometheus/     # Prometheus alerting rules
+│   └── grafana/        # Grafana dashboards
+├── scripts/
+│   ├── backup.sh       # Backup automation
+│   └── restore.sh      # Restore automation
 └── sdk/
     ├── typescript/     # TypeScript SDK
     └── python/         # Python SDK

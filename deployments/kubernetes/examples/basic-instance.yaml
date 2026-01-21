@@ -1,0 +1,29 @@
+---
+# Basic MAIA Instance - Single replica with local embedding
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia-basic
+  namespace: default
+spec:
+  replicas: 1
+  image:
+    repository: ghcr.io/ar4mirez/maia
+    tag: latest
+  storage:
+    size: 10Gi
+    dataDir: /data
+  embedding:
+    model: local
+  logging:
+    level: info
+    format: json
+  metrics:
+    enabled: true
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi

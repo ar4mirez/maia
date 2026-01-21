@@ -1,0 +1,79 @@
+Thank you for installing {{ .Chart.Name }}.
+
+Your release is named {{ .Release.Name }}.
+
+To learn more about the release, try:
+
+  $ helm status {{ .Release.Name }}
+  $ helm get all {{ .Release.Name }}
+
+{{- if .Values.ingress.enabled }}
+
+MAIA is accessible via the following URL(s):
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+
+{{- else if contains "NodePort" .Values.service.type }}
+
+Get the application URL by running these commands:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "maia.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+
+{{- else if contains "LoadBalancer" .Values.service.type }}
+
+Get the application URL by running these commands:
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        You can watch the status of by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "maia.fullname" . }}'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "maia.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo http://$SERVICE_IP:{{ .Values.service.port }}
+
+{{- else if contains "ClusterIP" .Values.service.type }}
+
+Get the application URL by running these commands:
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "maia.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+
+{{- end }}
+
+API Endpoints:
+  - Health: /health
+  - Ready:  /ready
+  - Metrics: /metrics
+  - API: /api/v1/...
+
+{{- if .Values.maia.tenant.enabled }}
+
+Multi-tenancy is ENABLED.
+{{- if .Values.maia.tenant.requireTenant }}
+  - Tenant header (X-Tenant-ID) is REQUIRED for all requests
+{{- else }}
+  - Tenant header (X-Tenant-ID) is optional, defaults to: {{ .Values.maia.tenant.defaultTenantId }}
+{{- end }}
+{{- if .Values.maia.tenant.enforceScopesEnabled }}
+  - API key scope enforcement is ENABLED
+{{- end }}
+
+{{- end }}
+
+{{- if not .Values.maia.security.apiKey }}
+{{- if not .Values.maia.security.existingSecret }}
+
+WARNING: No API key configured. For production use, set:
+  --set maia.security.apiKey=YOUR_SECRET_KEY
+  or
+  --set maia.security.existingSecret=YOUR_SECRET_NAME
+
+{{- end }}
+{{- end }}
+
+{{- if .Values.metrics.serviceMonitor.enabled }}
+
+Prometheus ServiceMonitor is enabled. Metrics will be scraped automatically.
+
+{{- end }}
+
+For documentation, visit: https://github.com/ar4mirez/maia

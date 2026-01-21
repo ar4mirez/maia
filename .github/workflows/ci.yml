@@ -107,6 +107,7 @@ jobs:
           go build -ldflags="-s -w" -o build/maia${EXT} ./cmd/maia
           go build -ldflags="-s -w" -o build/maiactl${EXT} ./cmd/maiactl
           go build -ldflags="-s -w" -o build/maia-mcp${EXT} ./cmd/mcp-server
+          go build -ldflags="-s -w" -o build/maia-migrate${EXT} ./cmd/migrate
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -159,3 +160,38 @@ jobs:
           name: benchmark-results
           path: benchmark.txt
           retention-days: 30
+
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: Lint Helm chart
+        run: helm lint deployments/helm/maia
+
+      - name: Template Helm chart
+        run: helm template maia deployments/helm/maia > /dev/null
+
+  validate-crds:
+    name: Validate CRDs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Validate CRD syntax
+        run: |
+          kubectl apply --dry-run=client -f deployments/kubernetes/crds/maia.cuemby.com_maiainstances.yaml
+          kubectl apply --dry-run=client -f deployments/kubernetes/crds/maia.cuemby.com_maiatenants.yaml
