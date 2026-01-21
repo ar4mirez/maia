@@ -144,6 +144,20 @@ jobs:
           echo "$CHANGES" > changelog.txt
           echo "Generated changelog with $(wc -l < changelog.txt) entries"
 
+      - name: Read changelog
+        id: read_changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          cat changelog.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Read checksums
+        id: read_checksums
+        run: |
+          echo "CHECKSUMS<<EOF" >> $GITHUB_OUTPUT
+          cat artifacts/checksums.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -152,7 +166,7 @@ jobs:
           body: |
             ## What's Changed
 
-            $(cat changelog.txt)
+            ${{ steps.read_changelog.outputs.CHANGELOG }}
 
             ## Installation
 
@@ -186,7 +200,7 @@ jobs:
 
             ### Helm Chart
             ```bash
-            helm install maia https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-chart-${{ steps.version.outputs.VERSION }}.tgz
+            helm install maia https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.VERSION }}/maia-chart.tgz
             ```
 
             ### Windows
@@ -199,7 +213,7 @@ jobs:
 
             ## Checksums
             ```
-            $(cat artifacts/checksums.txt)
+            ${{ steps.read_checksums.outputs.CHECKSUMS }}
             ```
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
@@ -235,13 +249,13 @@ jobs:
         run: |
           mkdir -p dist
           helm package deployments/helm/maia -d dist
-          mv dist/maia-*.tgz dist/maia-chart-${{ steps.version.outputs.VERSION }}.tgz
+          mv dist/maia-*.tgz dist/maia-chart.tgz
 
       - name: Upload Helm chart artifact
         uses: actions/upload-artifact@v4
         with:
           name: helm-chart
-          path: dist/maia-chart-*.tgz
+          path: dist/maia-chart.tgz
           retention-days: 1
 
   build-docker:
