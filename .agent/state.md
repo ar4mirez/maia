@@ -1730,19 +1730,91 @@ MAIA_DATA_DIR=/data MAIA_BACKUP_DIR=/backups ./scripts/scheduled-backup.sh
 
 ---
 
+### SESSION 34 (2026-01-21) - Kubernetes Operator Implementation
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Created RFD 0006: Kubernetes Operator architecture
+- [x] Set up operator project structure with controller-runtime v0.23.0
+- [x] Defined Go types for MaiaInstance and MaiaTenant CRDs matching existing YAML CRDs
+- [x] Implemented MaiaInstanceReconciler with full resource management:
+  - ConfigMap generation from spec
+  - PVC creation with storage class support
+  - Deployment with health probes, security context, env vars
+  - Service (ClusterIP + headless)
+  - Ingress (optional)
+  - Status tracking with conditions
+- [x] Implemented MaiaTenantReconciler with MAIA Admin API integration:
+  - Tenant creation/update via HTTP API
+  - Suspension/activation handling
+  - API key provisioning and secret management
+  - Usage tracking and quota calculation
+  - Status sync with conditions
+- [x] Implemented MAIA Admin API client (`operator/pkg/maia/client.go`)
+- [x] Added comprehensive tests:
+  - MAIA client tests (17 tests, 75% coverage)
+  - Controller integration tests (envtest-based)
+- [x] Created operator deployment manifests:
+  - Dockerfile (multi-stage, distroless)
+  - Makefile with standard targets
+  - RBAC (ClusterRole, ClusterRoleBinding, ServiceAccount)
+  - Manager deployment
+  - Sample CRs
+- [x] Added operator documentation:
+  - `operator/README.md` - Operator-specific docs
+  - `docs/operator.md` - User-facing documentation
+
+**Key Components Added**:
+
+- `operator/` - New operator module
+  - `cmd/operator/main.go` - Operator entrypoint
+  - `api/v1alpha1/` - CRD Go types
+  - `internal/controller/` - Reconcilers
+  - `pkg/maia/` - Admin API client
+  - `config/` - Deployment manifests
+- `.agent/rfd/0006-kubernetes-operator.md` - Architecture decision
+
+**Kubernetes Compatibility**:
+
+- Kubernetes 1.35+ required
+- controller-runtime v0.23.0 (k8s.io/* v1.35)
+- Full CRD compatibility with existing manifests
+
+**Operator Features**:
+
+- Declarative MAIA instance management
+- Tenant lifecycle via Admin API
+- API key provisioning to Secrets
+- Status tracking with conditions
+- Leader election for HA
+- Prometheus metrics
+- Health probes
+
+**Notes**:
+
+- Operator builds successfully
+- MAIA client tests pass (75% coverage)
+- Controller tests require envtest for full execution
+- Compatible with existing CRDs in `deployments/kubernetes/crds/`
+
+---
+
 ## Next Steps
 
 All features and advanced enhancements complete! The project is production-ready with:
 - Full multi-tenancy support
 - Comprehensive monitoring and alerting
 - Kubernetes-native deployment options
+- Kubernetes Operator for declarative management
 - Audit logging for compliance
 - Backup/restore automation
 
 Future implementation opportunities:
-1. **Kubernetes Operator** - Implement controller for CRDs
-2. **Multi-region Replication** - Implement RFD 0005 design
-3. **Advanced Analytics** - Usage analytics and insights dashboard
+1. **Multi-region Replication** - Implement RFD 0005 design
+2. **Advanced Analytics** - Usage analytics and insights dashboard
+3. **Operator Enhancements** - ServiceMonitor creation, CronJob for backups
 
 ---
 

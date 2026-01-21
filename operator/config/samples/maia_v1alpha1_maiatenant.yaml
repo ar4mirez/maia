@@ -1,0 +1,38 @@
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaTenant
+metadata:
+  name: demo-tenant
+  namespace: default
+spec:
+  instanceRef:
+    name: maia-sample
+    # namespace: default  # Optional, defaults to same namespace
+
+  displayName: "Demo Tenant"
+  plan: free
+
+  quotas:
+    maxMemories: 1000
+    maxStorageBytes: 104857600  # 100MB
+    maxNamespaces: 5
+    requestsPerMinute: 60
+    requestsPerDay: 1000
+
+  config:
+    defaultTokenBudget: 4000
+    maxTokenBudget: 8000
+    features:
+      inference: false
+      vectorSearch: true
+      fullTextSearch: true
+      contextAssembly: true
+
+  apiKeys:
+  - name: demo-key
+    secretRef:
+      name: demo-tenant-api-key
+      key: api-key
+    scopes:
+    - read
+    - write
+    - context

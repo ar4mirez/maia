@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- maia_v1alpha1_maiainstance.yaml
+- maia_v1alpha1_maiatenant.yaml

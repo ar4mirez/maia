@@ -1,0 +1,38 @@
+apiVersion: maia.cuemby.com/v1alpha1
+kind: MaiaInstance
+metadata:
+  name: maia-sample
+  namespace: default
+spec:
+  replicas: 1
+
+  image:
+    repository: ghcr.io/ar4mirez/maia
+    tag: v1.0.0
+    pullPolicy: IfNotPresent
+
+  storage:
+    size: 10Gi
+    dataDir: /data
+    syncWrites: false
+    gcInterval: 5m
+
+  embedding:
+    model: local
+
+  logging:
+    level: info
+    format: json
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
