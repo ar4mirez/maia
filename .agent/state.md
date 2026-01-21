@@ -1361,11 +1361,92 @@ DELETE /admin/apikeys/:key          # Revoke an API key
 
 ---
 
+### SESSION 29 (2026-01-20) - API Key Scopes Implementation
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Defined scope constants in `internal/tenant/types.go`:
+  - `ScopeAll` (`*`) - Wildcard for all operations
+  - `ScopeRead` - Read access to memories/namespaces
+  - `ScopeWrite` - Write access (create, update)
+  - `ScopeDelete` - Delete access
+  - `ScopeAdmin` - Administrative operations
+  - `ScopeContext` - Context assembly operations
+  - `ScopeInference` - Inference operations
+  - `ScopeSearch` - Search operations
+  - `ScopeStats` - Statistics and metrics
+- [x] Added `HasScope()` method to APIKey struct
+- [x] Added `HasAnyScope()` method for checking multiple scopes
+- [x] Added `ValidateScopes()` function for scope validation
+- [x] Added `ErrInsufficientScope` error type
+- [x] Updated tenant middleware to store API key in context (`APIKeyKey`)
+- [x] Added `GetAPIKeyFromContext()` helper function
+- [x] Implemented `ScopeMiddleware` with configurable route-to-scope mapping
+- [x] Implemented `DefaultRouteScopes()` with mappings for all MAIA routes
+- [x] Implemented `RequireScope()` single-scope middleware helper
+- [x] Added comprehensive scope tests (30+ test cases)
+- [x] Tenant package coverage improved from 80.5% to 83.1%
+- [x] Overall coverage: 75.2%
+
+**Key Components Added/Modified**:
+
+- `internal/tenant/types.go` - Scope constants, HasScope, HasAnyScope, ValidateScopes
+- `internal/tenant/errors.go` - ErrInsufficientScope
+- `internal/tenant/middleware.go` - ScopeMiddleware, RequireScope, GetAPIKeyFromContext
+- `internal/tenant/middleware_test.go` - Comprehensive scope tests
+- `internal/tenant/errors_test.go` - Error type tests
+
+**Scope-Based Authorization Features**:
+
+- Fine-grained access control via API key scopes
+- Backward compatible: empty scopes = all operations allowed
+- Wildcard scope (`*`) grants full access
+- Route-based scope mapping (configurable)
+- Prefix matching for routes with IDs (e.g., `/v1/memories/:id`)
+- Works alongside existing API key authentication
+
+**Default Route-to-Scope Mappings**:
+
+| Route Pattern | Required Scopes |
+|---------------|-----------------|
+| `POST /v1/memories` | write, * |
+| `GET /v1/memories` | read, search, * |
+| `DELETE /v1/memories` | delete, * |
+| `POST /v1/context` | context, read, * |
+| `POST /v1/chat/completions` | inference, * |
+| `GET /v1/stats` | stats, read, * |
+| `POST /admin/tenants` | admin, * |
+
+**Usage Example**:
+
+```go
+// Create API key with limited scopes
+apiKey, rawKey, _ := manager.CreateAPIKey(ctx, &tenant.CreateAPIKeyInput{
+    TenantID: tenantID,
+    Name:     "read-only-key",
+    Scopes:   []string{tenant.ScopeRead, tenant.ScopeSearch},
+})
+
+// Key will only work for GET operations
+// POST/PUT/DELETE will return 403 Forbidden with INSUFFICIENT_SCOPE error
+```
+
+**Notes**:
+
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- Scope checking only applies to API key authenticated requests
+- Requests without API keys are handled by auth middleware (not scope middleware)
+
+---
+
 ## Next Steps
 
 1. **Tenant Metrics Dashboard** - Add per-tenant Grafana dashboards
 2. **Data Migration Tools** - Tools to migrate data between tenants or from single to multi-tenant
-3. **API Key Scopes** - Implement scope-based authorization for API keys
+3. **OpenAPI Spec Update** - Add scope documentation to OpenAPI spec
 
 ---
 

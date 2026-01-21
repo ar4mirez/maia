@@ -208,6 +208,49 @@ const SystemTenantID = "system"
 // SystemTenantName is the name of the default system tenant.
 const SystemTenantName = "system"
 
+// Scope constants define the available API key scopes.
+const (
+	// ScopeAll grants access to all operations (wildcard).
+	ScopeAll = "*"
+
+	// ScopeRead grants read access to memories and namespaces.
+	ScopeRead = "read"
+
+	// ScopeWrite grants write access (create, update) to memories and namespaces.
+	ScopeWrite = "write"
+
+	// ScopeDelete grants delete access to memories and namespaces.
+	ScopeDelete = "delete"
+
+	// ScopeAdmin grants administrative access (tenant management, API key management).
+	ScopeAdmin = "admin"
+
+	// ScopeContext grants access to context assembly operations.
+	ScopeContext = "context"
+
+	// ScopeInference grants access to inference operations.
+	ScopeInference = "inference"
+
+	// ScopeSearch grants access to search operations.
+	ScopeSearch = "search"
+
+	// ScopeStats grants access to statistics and metrics.
+	ScopeStats = "stats"
+)
+
+// ValidScopes is the list of all valid scope values.
+var ValidScopes = []string{
+	ScopeAll,
+	ScopeRead,
+	ScopeWrite,
+	ScopeDelete,
+	ScopeAdmin,
+	ScopeContext,
+	ScopeInference,
+	ScopeSearch,
+	ScopeStats,
+}
+
 // APIKey represents an API key associated with a tenant.
 type APIKey struct {
 	// Key is the API key value (should be hashed in production).
@@ -235,6 +278,56 @@ func (k *APIKey) IsExpired() bool {
 		return false
 	}
 	return time.Now().After(k.ExpiresAt)
+}
+
+// HasScope checks if the API key has the required scope.
+// Empty scopes on the API key means all scopes are allowed.
+// The wildcard scope "*" grants access to all scopes.
+func (k *APIKey) HasScope(required string) bool {
+	// Empty scopes = all allowed (for backward compatibility)
+	if len(k.Scopes) == 0 {
+		return true
+	}
+
+	for _, scope := range k.Scopes {
+		// Wildcard grants everything
+		if scope == ScopeAll {
+			return true
+		}
+		// Direct match
+		if scope == required {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyScope checks if the API key has any of the required scopes.
+func (k *APIKey) HasAnyScope(required ...string) bool {
+	for _, r := range required {
+		if k.HasScope(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateScopes checks if all scopes in the list are valid.
+func ValidateScopes(scopes []string) error {
+	validSet := make(map[string]bool)
+	for _, s := range ValidScopes {
+		validSet[s] = true
+	}
+
+	for _, scope := range scopes {
+		if !validSet[scope] {
+			return &ErrInvalidInput{
+				Field:   "scopes",
+				Message: "invalid scope: " + scope,
+			}
+		}
+	}
+	return nil
 }
 
 // CreateAPIKeyInput holds input for creating an API key.

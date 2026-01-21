@@ -82,3 +82,13 @@ type ErrAPIKeyExpired struct {
 func (e *ErrAPIKeyExpired) Error() string {
 	return fmt.Sprintf("API key expired: %s", e.Key)
 }
+
+// ErrInsufficientScope is returned when an API key lacks the required scope.
+type ErrInsufficientScope struct {
+	Required string
+	Provided []string
+}
+
+func (e *ErrInsufficientScope) Error() string {
+	return fmt.Sprintf("insufficient scope: required=%s, provided=%v", e.Required, e.Provided)
+}

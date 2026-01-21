@@ -66,3 +66,18 @@ func TestErrTenantPendingDeletion_Error(t *testing.T) {
 	err := &ErrTenantPendingDeletion{TenantID: "tenant-1"}
 	assert.Equal(t, "tenant is pending deletion: tenant-1", err.Error())
 }
+
+func TestErrAPIKeyNotFound_Error(t *testing.T) {
+	err := &ErrAPIKeyNotFound{Key: "maia_abc123"}
+	assert.Equal(t, "API key not found: maia_abc123", err.Error())
+}
+
+func TestErrAPIKeyExpired_Error(t *testing.T) {
+	err := &ErrAPIKeyExpired{Key: "maia_abc123"}
+	assert.Equal(t, "API key expired: maia_abc123", err.Error())
+}
+
+func TestErrInsufficientScope_Error(t *testing.T) {
+	err := &ErrInsufficientScope{Required: "write", Provided: []string{"read"}}
+	assert.Equal(t, "insufficient scope: required=write, provided=[read]", err.Error())
+}
