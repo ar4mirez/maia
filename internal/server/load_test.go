@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -64,7 +65,7 @@ func setupLoadTestServer(t testing.TB, withTenant bool) (*Server, func()) {
 		manager := tenant.NewBadgerManager(db)
 
 		// Create test tenant
-		_, err = manager.Create(t.(*testing.T).Context(), &tenant.CreateTenantInput{
+		_, err = manager.Create(context.Background(), &tenant.CreateTenantInput{
 			Name: "load-test-tenant",
 			Plan: tenant.PlanStandard,
 		})
@@ -122,7 +123,7 @@ func TestServerLoad_TenantIsolation(t *testing.T) {
 	defer cleanup()
 
 	// Get tenant ID
-	tenantResp, err := server.tenants.GetByName(t.Context(), "load-test-tenant")
+	tenantResp, err := server.tenants.GetByName(context.Background(), "load-test-tenant")
 	require.NoError(t, err)
 	tenantID := tenantResp.ID
 
@@ -215,7 +216,7 @@ func runServerLoadTest(t testing.TB, server *Server, config ServerLoadTestConfig
 	t.Helper()
 
 	// First, create some memories for read operations
-	ctx := t.(*testing.T).Context()
+	ctx := context.Background()
 	var memoryIDs []string
 	for i := 0; i < 100; i++ {
 		body := fmt.Sprintf(`{"namespace":"default","content":"Pre-populated memory %d","type":"semantic"}`, i)

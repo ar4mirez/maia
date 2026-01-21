@@ -76,8 +76,7 @@ Examples:
   migrate migrate-to-tenant --data-dir ./data --tenant-id acme-corp
 
   # Copy data between tenants
-  migrate copy-between-tenants --data-dir ./data --from-tenant tenant-a --to-tenant tenant-b
-`)
+  migrate copy-between-tenants --data-dir ./data --from-tenant tenant-a --to-tenant tenant-b`)
 }
 
 // ExportData represents exported MAIA data.
