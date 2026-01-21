@@ -320,7 +320,7 @@ func (s *Server) setupMiddleware() {
 
 	// Tenant middleware (multi-tenancy support)
 	if s.tenants != nil {
-		s.router.Use(tenant.Middleware(tenant.MiddlewareConfig{
+		middlewareConfig := tenant.MiddlewareConfig{
 			Manager:         s.tenants,
 			Enabled:         s.cfg.Tenant.Enabled,
 			DefaultTenantID: s.cfg.Tenant.DefaultTenantID,
@@ -331,7 +331,16 @@ func (s *Server) setupMiddleware() {
 				"/metrics",
 				"/admin",
 			},
-		}))
+		}
+
+		// Enable API key lookup if tenant manager implements APIKeyManager
+		if apiKeyManager, ok := s.tenants.(tenant.APIKeyManager); ok {
+			middlewareConfig.APIKeyManager = apiKeyManager
+			middlewareConfig.EnableAPIKeyLookup = true
+			s.logger.Info("tenant API key lookup enabled")
+		}
+
+		s.router.Use(tenant.Middleware(middlewareConfig))
 
 		// Quota middleware (checks tenant resource limits)
 		s.router.Use(tenant.QuotaMiddleware(s.tenants))
@@ -483,7 +492,14 @@ func (s *Server) setupRoutes() {
 				tenants.GET("/:id/usage", s.getTenantUsage)
 				tenants.POST("/:id/suspend", s.suspendTenant)
 				tenants.POST("/:id/activate", s.activateTenant)
+
+				// API key management routes
+				tenants.POST("/:id/apikeys", s.createAPIKey)
+				tenants.GET("/:id/apikeys", s.listAPIKeys)
 			}
+
+			// API key revocation (by key, not tenant-specific)
+			admin.DELETE("/apikeys/:key", s.revokeAPIKey)
 		}
 	}
 

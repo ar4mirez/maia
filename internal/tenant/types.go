@@ -207,3 +207,68 @@ const SystemTenantID = "system"
 
 // SystemTenantName is the name of the default system tenant.
 const SystemTenantName = "system"
+
+// APIKey represents an API key associated with a tenant.
+type APIKey struct {
+	// Key is the API key value (should be hashed in production).
+	Key string `json:"key"`
+	// TenantID is the ID of the tenant this key belongs to.
+	TenantID string `json:"tenant_id"`
+	// Name is a human-readable name for this key.
+	Name string `json:"name"`
+	// Scopes defines what operations this key can perform.
+	// Empty means all operations are allowed.
+	Scopes []string `json:"scopes,omitempty"`
+	// ExpiresAt is when this key expires (zero value = never).
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	// CreatedAt is when this key was created.
+	CreatedAt time.Time `json:"created_at"`
+	// LastUsedAt is when this key was last used.
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	// Metadata holds additional key-specific data.
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// IsExpired returns true if the API key has expired.
+func (k *APIKey) IsExpired() bool {
+	if k.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Now().After(k.ExpiresAt)
+}
+
+// CreateAPIKeyInput holds input for creating an API key.
+type CreateAPIKeyInput struct {
+	// TenantID is the ID of the tenant this key belongs to.
+	TenantID string `json:"tenant_id"`
+	// Name is a human-readable name for this key.
+	Name string `json:"name"`
+	// Scopes defines what operations this key can perform.
+	Scopes []string `json:"scopes,omitempty"`
+	// ExpiresAt is when this key expires (zero value = never).
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	// Metadata holds additional key-specific data.
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// APIKeyManager defines the interface for API key management.
+type APIKeyManager interface {
+	// CreateAPIKey creates a new API key for a tenant.
+	// Returns the full API key (only available at creation time).
+	CreateAPIKey(ctx context.Context, input *CreateAPIKeyInput) (*APIKey, string, error)
+
+	// GetAPIKey retrieves an API key by its key value.
+	GetAPIKey(ctx context.Context, key string) (*APIKey, error)
+
+	// GetTenantByAPIKey retrieves the tenant associated with an API key.
+	GetTenantByAPIKey(ctx context.Context, key string) (*Tenant, error)
+
+	// ListAPIKeys lists all API keys for a tenant.
+	ListAPIKeys(ctx context.Context, tenantID string) ([]*APIKey, error)
+
+	// RevokeAPIKey revokes an API key.
+	RevokeAPIKey(ctx context.Context, key string) error
+
+	// UpdateAPIKeyLastUsed updates the last used timestamp for an API key.
+	UpdateAPIKeyLastUsed(ctx context.Context, key string) error
+}

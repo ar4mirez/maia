@@ -64,3 +64,21 @@ type ErrTenantPendingDeletion struct {
 func (e *ErrTenantPendingDeletion) Error() string {
 	return fmt.Sprintf("tenant is pending deletion: %s", e.TenantID)
 }
+
+// ErrAPIKeyNotFound is returned when an API key is not found.
+type ErrAPIKeyNotFound struct {
+	Key string
+}
+
+func (e *ErrAPIKeyNotFound) Error() string {
+	return fmt.Sprintf("API key not found: %s", e.Key)
+}
+
+// ErrAPIKeyExpired is returned when an API key has expired.
+type ErrAPIKeyExpired struct {
+	Key string
+}
+
+func (e *ErrAPIKeyExpired) Error() string {
+	return fmt.Sprintf("API key expired: %s", e.Key)
+}

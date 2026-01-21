@@ -24,6 +24,9 @@ const HeaderTenantID = "X-MAIA-Tenant-ID"
 type MiddlewareConfig struct {
 	// Manager is the tenant manager.
 	Manager Manager
+	// APIKeyManager is the API key manager for looking up tenants by API key.
+	// If nil, API key to tenant lookup is disabled.
+	APIKeyManager APIKeyManager
 	// Enabled controls whether tenant middleware is active.
 	Enabled bool
 	// DefaultTenantID is used when no tenant is specified (for backward compatibility).
@@ -32,6 +35,8 @@ type MiddlewareConfig struct {
 	RequireTenant bool
 	// SkipPaths are paths that skip tenant validation (e.g., health checks).
 	SkipPaths []string
+	// EnableAPIKeyLookup controls whether to lookup tenant by API key.
+	EnableAPIKeyLookup bool
 }
 
 // Middleware returns a Gin middleware for tenant identification and validation.
@@ -51,8 +56,34 @@ func Middleware(config MiddlewareConfig) gin.HandlerFunc {
 			}
 		}
 
-		// Extract tenant ID from header or use default
-		tenantID := c.GetHeader(HeaderTenantID)
+		// Try to get tenant from various sources in order of priority:
+		// 1. X-MAIA-Tenant-ID header (explicit tenant ID)
+		// 2. API key lookup (if enabled)
+		// 3. Default tenant ID (fallback)
+		var tenant *Tenant
+		var tenantID string
+		var err error
+
+		// 1. Try explicit tenant ID header first
+		tenantID = c.GetHeader(HeaderTenantID)
+
+		// 2. If no explicit tenant ID and API key lookup is enabled, try API key
+		if tenantID == "" && config.EnableAPIKeyLookup && config.APIKeyManager != nil {
+			apiKey := extractAPIKey(c)
+			if apiKey != "" {
+				tenant, err = config.APIKeyManager.GetTenantByAPIKey(c.Request.Context(), apiKey)
+				if err == nil && tenant != nil {
+					tenantID = tenant.ID
+					// Update last used timestamp asynchronously (best-effort)
+					go func(key string) {
+						_ = config.APIKeyManager.UpdateAPIKeyLastUsed(c.Request.Context(), key)
+					}(apiKey)
+				}
+				// If API key lookup fails, continue - might use default tenant
+			}
+		}
+
+		// 3. Fall back to default tenant ID
 		if tenantID == "" {
 			tenantID = config.DefaultTenantID
 		}
@@ -61,7 +92,7 @@ func Middleware(config MiddlewareConfig) gin.HandlerFunc {
 		if tenantID == "" && config.RequireTenant {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"error": "tenant identification required",
-				"hint":  "provide X-MAIA-Tenant-ID header",
+				"hint":  "provide X-MAIA-Tenant-ID header or use an API key associated with a tenant",
 			})
 			return
 		}
@@ -72,19 +103,21 @@ func Middleware(config MiddlewareConfig) gin.HandlerFunc {
 			return
 		}
 
-		// Get tenant from manager
-		tenant, err := config.Manager.Get(c.Request.Context(), tenantID)
-		if err != nil {
-			if _, ok := err.(*ErrNotFound); ok {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-					"error": "invalid tenant",
+		// Get tenant from manager if we don't have it yet
+		if tenant == nil {
+			tenant, err = config.Manager.Get(c.Request.Context(), tenantID)
+			if err != nil {
+				if _, ok := err.(*ErrNotFound); ok {
+					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+						"error": "invalid tenant",
+					})
+					return
+				}
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"error": "failed to retrieve tenant",
 				})
 				return
 			}
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
-				"error": "failed to retrieve tenant",
-			})
-			return
 		}
 
 		// Check tenant status
@@ -108,6 +141,29 @@ func Middleware(config MiddlewareConfig) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// extractAPIKey extracts the API key from the request.
+func extractAPIKey(c *gin.Context) string {
+	// Try X-API-Key header
+	apiKey := c.GetHeader("X-API-Key")
+	if apiKey != "" {
+		return apiKey
+	}
+
+	// Try Authorization Bearer token
+	auth := c.GetHeader("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimPrefix(auth, "Bearer ")
+	}
+
+	// Try query parameter
+	apiKey = c.Query("api_key")
+	if apiKey != "" {
+		return apiKey
+	}
+
+	return ""
 }
 
 // GetTenant retrieves the tenant from Gin context.

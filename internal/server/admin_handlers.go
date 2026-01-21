@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -33,6 +34,20 @@ type UpdateTenantRequest struct {
 type TenantUsageResponse struct {
 	Tenant *tenant.Tenant `json:"tenant"`
 	Usage  *tenant.Usage  `json:"usage"`
+}
+
+// CreateAPIKeyRequest represents the request to create an API key.
+type CreateAPIKeyRequest struct {
+	Name      string                 `json:"name" binding:"required"`
+	Scopes    []string               `json:"scopes,omitempty"`
+	ExpiresAt string                 `json:"expires_at,omitempty"` // RFC3339 format
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// CreateAPIKeyResponse represents the response when creating an API key.
+type CreateAPIKeyResponse struct {
+	APIKey *tenant.APIKey `json:"api_key"`
+	Key    string         `json:"key"` // The raw key (only returned once)
 }
 
 // createTenant handles tenant creation.
@@ -344,4 +359,150 @@ func (s *Server) activateTenant(c *gin.Context) {
 // logError creates a zap field for error logging.
 func logError(err error) zap.Field {
 	return zap.Error(err)
+}
+
+// createAPIKey handles creating an API key for a tenant.
+func (s *Server) createAPIKey(c *gin.Context) {
+	tenantID := c.Param("id")
+
+	// Check if tenant manager implements APIKeyManager
+	apiKeyManager, ok := s.tenants.(tenant.APIKeyManager)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, ErrorResponse{
+			Error: "API key management not supported",
+			Code:  "NOT_IMPLEMENTED",
+		})
+		return
+	}
+
+	var req CreateAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: "invalid request body",
+			Code:  "INVALID_INPUT",
+		})
+		return
+	}
+
+	input := &tenant.CreateAPIKeyInput{
+		TenantID: tenantID,
+		Name:     req.Name,
+		Scopes:   req.Scopes,
+		Metadata: req.Metadata,
+	}
+
+	// Parse expiration time if provided
+	if req.ExpiresAt != "" {
+		expiresAt, err := time.Parse(time.RFC3339, req.ExpiresAt)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error: "invalid expires_at format, expected RFC3339",
+				Code:  "INVALID_INPUT",
+			})
+			return
+		}
+		input.ExpiresAt = expiresAt
+	}
+
+	apiKey, rawKey, err := apiKeyManager.CreateAPIKey(c.Request.Context(), input)
+	if err != nil {
+		if _, ok := err.(*tenant.ErrNotFound); ok {
+			c.JSON(http.StatusNotFound, ErrorResponse{
+				Error: err.Error(),
+				Code:  "NOT_FOUND",
+			})
+			return
+		}
+		if _, ok := err.(*tenant.ErrInvalidInput); ok {
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error: err.Error(),
+				Code:  "INVALID_INPUT",
+			})
+			return
+		}
+
+		s.logger.Error("failed to create API key", logError(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "internal server error",
+			Code:  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, CreateAPIKeyResponse{
+		APIKey: apiKey,
+		Key:    rawKey,
+	})
+}
+
+// listAPIKeys handles listing API keys for a tenant.
+func (s *Server) listAPIKeys(c *gin.Context) {
+	tenantID := c.Param("id")
+
+	// Check if tenant manager implements APIKeyManager
+	apiKeyManager, ok := s.tenants.(tenant.APIKeyManager)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, ErrorResponse{
+			Error: "API key management not supported",
+			Code:  "NOT_IMPLEMENTED",
+		})
+		return
+	}
+
+	apiKeys, err := apiKeyManager.ListAPIKeys(c.Request.Context(), tenantID)
+	if err != nil {
+		if _, ok := err.(*tenant.ErrInvalidInput); ok {
+			c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error: err.Error(),
+				Code:  "INVALID_INPUT",
+			})
+			return
+		}
+
+		s.logger.Error("failed to list API keys", logError(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "internal server error",
+			Code:  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, ListResponse{
+		Data:  apiKeys,
+		Count: len(apiKeys),
+	})
+}
+
+// revokeAPIKey handles revoking an API key.
+func (s *Server) revokeAPIKey(c *gin.Context) {
+	key := c.Param("key")
+
+	// Check if tenant manager implements APIKeyManager
+	apiKeyManager, ok := s.tenants.(tenant.APIKeyManager)
+	if !ok {
+		c.JSON(http.StatusNotImplemented, ErrorResponse{
+			Error: "API key management not supported",
+			Code:  "NOT_IMPLEMENTED",
+		})
+		return
+	}
+
+	if err := apiKeyManager.RevokeAPIKey(c.Request.Context(), key); err != nil {
+		if _, ok := err.(*tenant.ErrAPIKeyNotFound); ok {
+			c.JSON(http.StatusNotFound, ErrorResponse{
+				Error: err.Error(),
+				Code:  "NOT_FOUND",
+			})
+			return
+		}
+
+		s.logger.Error("failed to revoke API key", logError(err))
+		c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "internal server error",
+			Code:  "INTERNAL_ERROR",
+		})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
 }

@@ -620,3 +620,360 @@ func TestDefaultConfig_UnknownPlan(t *testing.T) {
 	freeConfig := DefaultConfig(PlanFree)
 	assert.Equal(t, freeConfig, config)
 }
+
+// API Key Tests
+
+func TestBadgerManager_CreateAPIKey(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create a tenant first
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "apikey-test"})
+	require.NoError(t, err)
+
+	input := &CreateAPIKeyInput{
+		TenantID: tenant.ID,
+		Name:     "test-key",
+		Scopes:   []string{"read", "write"},
+	}
+
+	apiKey, rawKey, err := manager.CreateAPIKey(ctx, input)
+	require.NoError(t, err)
+	assert.NotEmpty(t, apiKey.Key)
+	assert.NotEmpty(t, rawKey)
+	assert.True(t, len(rawKey) > 10) // maia_ prefix + hex
+	assert.Equal(t, tenant.ID, apiKey.TenantID)
+	assert.Equal(t, "test-key", apiKey.Name)
+	assert.Equal(t, []string{"read", "write"}, apiKey.Scopes)
+	assert.False(t, apiKey.CreatedAt.IsZero())
+}
+
+func TestBadgerManager_CreateAPIKey_WithExpiration(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "expiry-test"})
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(24 * time.Hour)
+	input := &CreateAPIKeyInput{
+		TenantID:  tenant.ID,
+		Name:      "expiring-key",
+		ExpiresAt: expiresAt,
+	}
+
+	apiKey, _, err := manager.CreateAPIKey(ctx, input)
+	require.NoError(t, err)
+	assert.False(t, apiKey.ExpiresAt.IsZero())
+	assert.False(t, apiKey.IsExpired())
+}
+
+func TestBadgerManager_CreateAPIKey_Validation(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "validation-test"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name    string
+		input   *CreateAPIKeyInput
+		wantErr bool
+	}{
+		{
+			name:    "nil input",
+			input:   nil,
+			wantErr: true,
+		},
+		{
+			name:    "empty tenant_id",
+			input:   &CreateAPIKeyInput{TenantID: "", Name: "test"},
+			wantErr: true,
+		},
+		{
+			name:    "empty name",
+			input:   &CreateAPIKeyInput{TenantID: tenant.ID, Name: ""},
+			wantErr: true,
+		},
+		{
+			name:    "nonexistent tenant",
+			input:   &CreateAPIKeyInput{TenantID: "nonexistent", Name: "test"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := manager.CreateAPIKey(ctx, tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBadgerManager_GetAPIKey(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "getkey-test"})
+	require.NoError(t, err)
+
+	created, rawKey, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID: tenant.ID,
+		Name:     "retrieve-key",
+	})
+	require.NoError(t, err)
+
+	// Retrieve by raw key
+	retrieved, err := manager.GetAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+	assert.Equal(t, created.Key, retrieved.Key)
+	assert.Equal(t, created.TenantID, retrieved.TenantID)
+	assert.Equal(t, created.Name, retrieved.Name)
+}
+
+func TestBadgerManager_GetAPIKey_NotFound(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, err := manager.GetAPIKey(ctx, "nonexistent-key")
+	assert.Error(t, err)
+
+	var notFound *ErrAPIKeyNotFound
+	assert.ErrorAs(t, err, &notFound)
+}
+
+func TestBadgerManager_GetTenantByAPIKey(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "tenant-by-key"})
+	require.NoError(t, err)
+
+	_, rawKey, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID: tenant.ID,
+		Name:     "lookup-key",
+	})
+	require.NoError(t, err)
+
+	// Get tenant by API key
+	retrieved, err := manager.GetTenantByAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+	assert.Equal(t, tenant.ID, retrieved.ID)
+	assert.Equal(t, tenant.Name, retrieved.Name)
+}
+
+func TestBadgerManager_GetTenantByAPIKey_Expired(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "expired-key-tenant"})
+	require.NoError(t, err)
+
+	// Create an already-expired key
+	expiresAt := time.Now().Add(-1 * time.Hour)
+	_, rawKey, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID:  tenant.ID,
+		Name:      "expired-key",
+		ExpiresAt: expiresAt,
+	})
+	require.NoError(t, err)
+
+	// Should fail due to expired key
+	_, err = manager.GetTenantByAPIKey(ctx, rawKey)
+	assert.Error(t, err)
+
+	var expired *ErrAPIKeyExpired
+	assert.ErrorAs(t, err, &expired)
+}
+
+func TestBadgerManager_ListAPIKeys(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "list-keys-tenant"})
+	require.NoError(t, err)
+
+	// Create multiple API keys
+	for i := 0; i < 3; i++ {
+		_, _, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+			TenantID: tenant.ID,
+			Name:     "key-" + string(rune('A'+i)),
+		})
+		require.NoError(t, err)
+	}
+
+	apiKeys, err := manager.ListAPIKeys(ctx, tenant.ID)
+	require.NoError(t, err)
+	assert.Len(t, apiKeys, 3)
+}
+
+func TestBadgerManager_ListAPIKeys_Empty(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "no-keys-tenant"})
+	require.NoError(t, err)
+
+	apiKeys, err := manager.ListAPIKeys(ctx, tenant.ID)
+	require.NoError(t, err)
+	assert.Empty(t, apiKeys)
+}
+
+func TestBadgerManager_ListAPIKeys_Validation(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	_, err := manager.ListAPIKeys(ctx, "")
+	assert.Error(t, err)
+
+	var invalidInput *ErrInvalidInput
+	assert.ErrorAs(t, err, &invalidInput)
+}
+
+func TestBadgerManager_RevokeAPIKey(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "revoke-key-tenant"})
+	require.NoError(t, err)
+
+	_, rawKey, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID: tenant.ID,
+		Name:     "to-revoke",
+	})
+	require.NoError(t, err)
+
+	// Revoke the key
+	err = manager.RevokeAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+
+	// Should no longer be retrievable
+	_, err = manager.GetAPIKey(ctx, rawKey)
+	assert.Error(t, err)
+
+	// Should no longer appear in list
+	apiKeys, err := manager.ListAPIKeys(ctx, tenant.ID)
+	require.NoError(t, err)
+	assert.Empty(t, apiKeys)
+}
+
+func TestBadgerManager_RevokeAPIKey_NotFound(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	err := manager.RevokeAPIKey(ctx, "nonexistent-key")
+	assert.Error(t, err)
+
+	var notFound *ErrAPIKeyNotFound
+	assert.ErrorAs(t, err, &notFound)
+}
+
+func TestBadgerManager_UpdateAPIKeyLastUsed(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tenant, err := manager.Create(ctx, &CreateTenantInput{Name: "last-used-tenant"})
+	require.NoError(t, err)
+
+	apiKey, rawKey, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID: tenant.ID,
+		Name:     "track-usage",
+	})
+	require.NoError(t, err)
+	assert.True(t, apiKey.LastUsedAt.IsZero())
+
+	// Update last used
+	err = manager.UpdateAPIKeyLastUsed(ctx, rawKey)
+	require.NoError(t, err)
+
+	// Verify it was updated
+	retrieved, err := manager.GetAPIKey(ctx, rawKey)
+	require.NoError(t, err)
+	assert.False(t, retrieved.LastUsedAt.IsZero())
+}
+
+func TestBadgerManager_UpdateAPIKeyLastUsed_NotFound(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Should not error for nonexistent key (silently ignore)
+	err := manager.UpdateAPIKeyLastUsed(ctx, "nonexistent-key")
+	assert.NoError(t, err)
+}
+
+func TestBadgerManager_APIKeyIsolation(t *testing.T) {
+	manager, cleanup := setupTestManager(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create two tenants
+	tenant1, err := manager.Create(ctx, &CreateTenantInput{Name: "tenant-1"})
+	require.NoError(t, err)
+
+	tenant2, err := manager.Create(ctx, &CreateTenantInput{Name: "tenant-2"})
+	require.NoError(t, err)
+
+	// Create API keys for each
+	_, key1, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID: tenant1.ID,
+		Name:     "key-1",
+	})
+	require.NoError(t, err)
+
+	_, key2, err := manager.CreateAPIKey(ctx, &CreateAPIKeyInput{
+		TenantID: tenant2.ID,
+		Name:     "key-2",
+	})
+	require.NoError(t, err)
+
+	// Verify keys belong to correct tenants
+	t1, err := manager.GetTenantByAPIKey(ctx, key1)
+	require.NoError(t, err)
+	assert.Equal(t, tenant1.ID, t1.ID)
+
+	t2, err := manager.GetTenantByAPIKey(ctx, key2)
+	require.NoError(t, err)
+	assert.Equal(t, tenant2.ID, t2.ID)
+
+	// Verify list isolation
+	keys1, err := manager.ListAPIKeys(ctx, tenant1.ID)
+	require.NoError(t, err)
+	assert.Len(t, keys1, 1)
+
+	keys2, err := manager.ListAPIKeys(ctx, tenant2.ID)
+	require.NoError(t, err)
+	assert.Len(t, keys2, 1)
+}

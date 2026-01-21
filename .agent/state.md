@@ -1270,13 +1270,102 @@ tenant:
 - Linter clean (golangci-lint run passes)
 - Backward compatible: works without tenant manager or config
 
+### SESSION 28 (2026-01-20) - Tenant API Key Integration
+
+**STATUS**: COMPLETE
+
+**Completed This Session**:
+
+- [x] Implemented `APIKey` struct with fields: Key, TenantID, Name, Scopes, ExpiresAt, CreatedAt, LastUsedAt, Metadata
+- [x] Added `IsExpired()` method for API key expiration checking
+- [x] Added `CreateAPIKeyInput` struct for API key creation
+- [x] Implemented `APIKeyManager` interface with methods:
+  - CreateAPIKey - Generate and store API key (returns raw key only once)
+  - GetAPIKey - Retrieve API key by raw key value
+  - GetTenantByAPIKey - Get tenant associated with an API key
+  - ListAPIKeys - List all API keys for a tenant
+  - RevokeAPIKey - Revoke (delete) an API key
+  - UpdateAPIKeyLastUsed - Update last used timestamp
+- [x] Implemented APIKeyManager in BadgerManager:
+  - Key generation: `maia_` prefix + 64 hex chars (32 bytes random)
+  - Key storage: SHA-256 hash stored, not raw key
+  - Index for tenant lookup: `apikey_tenant:{tenant_id}:{key_hash}`
+- [x] Added API key error types: `ErrAPIKeyNotFound`, `ErrAPIKeyExpired`
+- [x] Updated tenant middleware to support API key lookup for automatic tenant identification
+  - Added `APIKeyManager` and `EnableAPIKeyLookup` to `MiddlewareConfig`
+  - Middleware automatically identifies tenant from API key if no explicit header
+  - Async update of `LastUsedAt` timestamp on each request
+- [x] Added Admin API endpoints for API key management:
+  - `POST /admin/tenants/:id/apikeys` - Create API key for tenant
+  - `GET /admin/tenants/:id/apikeys` - List API keys for tenant
+  - `DELETE /admin/apikeys/:key` - Revoke an API key
+- [x] Added comprehensive API key tests (17 new tests):
+  - CreateAPIKey, CreateAPIKey_WithExpiration, CreateAPIKey_Validation
+  - GetAPIKey, GetAPIKey_NotFound
+  - GetTenantByAPIKey, GetTenantByAPIKey_Expired
+  - ListAPIKeys, ListAPIKeys_Empty, ListAPIKeys_Validation
+  - RevokeAPIKey, RevokeAPIKey_NotFound
+  - UpdateAPIKeyLastUsed, UpdateAPIKeyLastUsed_NotFound
+  - APIKeyIsolation (multi-tenant)
+- [x] All tests pass
+
+**Key Components Added/Modified**:
+
+- `internal/tenant/types.go` - Added APIKey, CreateAPIKeyInput, APIKeyManager interface
+- `internal/tenant/errors.go` - Added ErrAPIKeyNotFound, ErrAPIKeyExpired
+- `internal/tenant/manager.go` - Implemented APIKeyManager methods with SHA-256 hashing
+- `internal/tenant/middleware.go` - Added API key lookup support
+- `internal/tenant/manager_test.go` - Added 17 API key tests
+- `internal/server/server.go` - Updated middleware config to enable API key lookup
+- `internal/server/admin_handlers.go` - Added createAPIKey, listAPIKeys, revokeAPIKey handlers
+
+**API Key Features**:
+
+- Cryptographically secure key generation (32 bytes from crypto/rand)
+- SHA-256 hashing for secure storage (raw key never stored)
+- Scopes for fine-grained access control (future use)
+- Expiration support with automatic checking
+- Last used tracking for auditing
+- Tenant isolation (each tenant's keys are separate)
+
+**Admin API Endpoints Added**:
+
+```
+POST   /admin/tenants/:id/apikeys   # Create API key for tenant
+GET    /admin/tenants/:id/apikeys   # List API keys for tenant
+DELETE /admin/apikeys/:key          # Revoke an API key
+```
+
+**API Key Response Format** (on creation):
+
+```json
+{
+  "api_key": {
+    "key": "<hash>",
+    "tenant_id": "abc123",
+    "name": "production-key",
+    "scopes": ["read", "write"],
+    "expires_at": "2027-01-20T00:00:00Z",
+    "created_at": "2026-01-20T12:00:00Z"
+  },
+  "key": "maia_a1b2c3d4e5f6..." // Raw key (only returned once!)
+}
+```
+
+**Notes**:
+
+- All tests pass with race detection
+- Linter clean (golangci-lint run passes)
+- Raw API key is only returned at creation time
+- API key lookup is optional (EnableAPIKeyLookup flag)
+
 ---
 
 ## Next Steps
 
-1. **Tenant API Key Integration** - Map API keys to tenants for automatic tenant identification
-2. **Tenant Metrics Dashboard** - Add per-tenant Grafana dashboards
-3. **Data Migration Tools** - Tools to migrate data between tenants or from single to multi-tenant
+1. **Tenant Metrics Dashboard** - Add per-tenant Grafana dashboards
+2. **Data Migration Tools** - Tools to migrate data between tenants or from single to multi-tenant
+3. **API Key Scopes** - Implement scope-based authorization for API keys
 
 ---
 

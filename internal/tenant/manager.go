@@ -2,6 +2,9 @@ package tenant
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -12,9 +15,11 @@ import (
 
 // Key prefixes for tenant storage.
 const (
-	prefixTenant      = "tenant:"
-	prefixTenantName  = "tenant_name:"
-	prefixTenantUsage = "tenant_usage:"
+	prefixTenant       = "tenant:"
+	prefixTenantName   = "tenant_name:"
+	prefixTenantUsage  = "tenant_usage:"
+	prefixAPIKey       = "apikey:"       // Maps key hash -> APIKey
+	prefixAPIKeyTenant = "apikey_tenant:" // Maps tenant_id:key_hash -> key_hash (for listing)
 )
 
 // BadgerManager implements Manager using BadgerDB.
@@ -494,4 +499,241 @@ func (m *BadgerManager) EnsureSystemTenant(ctx context.Context) (*Tenant, error)
 	}
 
 	return tenant, nil
+}
+
+// generateAPIKey generates a cryptographically secure API key.
+func generateAPIKey() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return "maia_" + hex.EncodeToString(b), nil
+}
+
+// hashAPIKey creates a SHA-256 hash of the API key for storage.
+func hashAPIKey(key string) string {
+	h := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(h[:])
+}
+
+// CreateAPIKey creates a new API key for a tenant.
+// Returns the API key metadata and the raw key (only available at creation time).
+func (m *BadgerManager) CreateAPIKey(ctx context.Context, input *CreateAPIKeyInput) (*APIKey, string, error) {
+	if input == nil {
+		return nil, "", &ErrInvalidInput{Field: "input", Message: "cannot be nil"}
+	}
+	if input.TenantID == "" {
+		return nil, "", &ErrInvalidInput{Field: "tenant_id", Message: "cannot be empty"}
+	}
+	if input.Name == "" {
+		return nil, "", &ErrInvalidInput{Field: "name", Message: "cannot be empty"}
+	}
+
+	// Verify tenant exists
+	_, err := m.Get(ctx, input.TenantID)
+	if err != nil {
+		return nil, "", fmt.Errorf("tenant verification failed: %w", err)
+	}
+
+	// Generate the raw API key
+	rawKey, err := generateAPIKey()
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Hash the key for storage
+	keyHash := hashAPIKey(rawKey)
+	now := time.Now().UTC()
+
+	apiKey := &APIKey{
+		Key:       keyHash, // Store the hash, not the raw key
+		TenantID:  input.TenantID,
+		Name:      input.Name,
+		Scopes:    input.Scopes,
+		ExpiresAt: input.ExpiresAt,
+		CreatedAt: now,
+		Metadata:  input.Metadata,
+	}
+
+	data, err := json.Marshal(apiKey)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to marshal API key: %w", err)
+	}
+
+	err = m.db.Update(func(txn *badger.Txn) error {
+		// Store the API key
+		if err := txn.Set([]byte(prefixAPIKey+keyHash), data); err != nil {
+			return err
+		}
+
+		// Store tenant index for listing
+		indexKey := prefixAPIKeyTenant + input.TenantID + ":" + keyHash
+		if err := txn.Set([]byte(indexKey), []byte(keyHash)); err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, "", err
+	}
+
+	return apiKey, rawKey, nil
+}
+
+// GetAPIKey retrieves an API key by its raw key value.
+func (m *BadgerManager) GetAPIKey(ctx context.Context, key string) (*APIKey, error) {
+	keyHash := hashAPIKey(key)
+	var apiKey APIKey
+
+	err := m.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(prefixAPIKey + keyHash))
+		if err == badger.ErrKeyNotFound {
+			return &ErrAPIKeyNotFound{Key: key[:min(10, len(key))] + "..."}
+		}
+		if err != nil {
+			return err
+		}
+
+		return item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &apiKey)
+		})
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &apiKey, nil
+}
+
+// GetTenantByAPIKey retrieves the tenant associated with an API key.
+func (m *BadgerManager) GetTenantByAPIKey(ctx context.Context, key string) (*Tenant, error) {
+	apiKey, err := m.GetAPIKey(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if key is expired
+	if apiKey.IsExpired() {
+		return nil, &ErrAPIKeyExpired{Key: key[:min(10, len(key))] + "..."}
+	}
+
+	return m.Get(ctx, apiKey.TenantID)
+}
+
+// ListAPIKeys lists all API keys for a tenant.
+func (m *BadgerManager) ListAPIKeys(ctx context.Context, tenantID string) ([]*APIKey, error) {
+	if tenantID == "" {
+		return nil, &ErrInvalidInput{Field: "tenant_id", Message: "cannot be empty"}
+	}
+
+	var apiKeys []*APIKey
+	prefix := []byte(prefixAPIKeyTenant + tenantID + ":")
+
+	err := m.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			var keyHash string
+			if err := it.Item().Value(func(val []byte) error {
+				keyHash = string(val)
+				return nil
+			}); err != nil {
+				continue
+			}
+
+			// Get the actual API key
+			item, err := txn.Get([]byte(prefixAPIKey + keyHash))
+			if err != nil {
+				continue // Skip if key was deleted
+			}
+
+			var apiKey APIKey
+			if err := item.Value(func(val []byte) error {
+				return json.Unmarshal(val, &apiKey)
+			}); err != nil {
+				continue
+			}
+
+			apiKeys = append(apiKeys, &apiKey)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return apiKeys, nil
+}
+
+// RevokeAPIKey revokes an API key.
+func (m *BadgerManager) RevokeAPIKey(ctx context.Context, key string) error {
+	keyHash := hashAPIKey(key)
+
+	return m.db.Update(func(txn *badger.Txn) error {
+		// Get the API key first to find the tenant ID
+		item, err := txn.Get([]byte(prefixAPIKey + keyHash))
+		if err == badger.ErrKeyNotFound {
+			return &ErrAPIKeyNotFound{Key: key[:min(10, len(key))] + "..."}
+		}
+		if err != nil {
+			return err
+		}
+
+		var apiKey APIKey
+		if err := item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &apiKey)
+		}); err != nil {
+			return err
+		}
+
+		// Delete the API key
+		if err := txn.Delete([]byte(prefixAPIKey + keyHash)); err != nil {
+			return err
+		}
+
+		// Delete the tenant index
+		indexKey := prefixAPIKeyTenant + apiKey.TenantID + ":" + keyHash
+		if err := txn.Delete([]byte(indexKey)); err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
+
+		return nil
+	})
+}
+
+// UpdateAPIKeyLastUsed updates the last used timestamp for an API key.
+func (m *BadgerManager) UpdateAPIKeyLastUsed(ctx context.Context, key string) error {
+	keyHash := hashAPIKey(key)
+
+	return m.db.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(prefixAPIKey + keyHash))
+		if err == badger.ErrKeyNotFound {
+			return nil // Silently ignore if key not found
+		}
+		if err != nil {
+			return err
+		}
+
+		var apiKey APIKey
+		if err := item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &apiKey)
+		}); err != nil {
+			return err
+		}
+
+		apiKey.LastUsedAt = time.Now().UTC()
+
+		data, err := json.Marshal(&apiKey)
+		if err != nil {
+			return err
+		}
+
+		return txn.Set([]byte(prefixAPIKey+keyHash), data)
+	})
 }
